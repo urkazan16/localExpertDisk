@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   getChildren,
   getCategories,
+  getFilesInCategory,
   getLargeFiles,
   getScanRoot,
   moveEntriesToTrash,
@@ -11,6 +12,7 @@ import {
   searchEntries,
   type EntryPage,
   type CategorySummary,
+  type FileCategory,
   type IndexedEntry,
   type ScanSession,
 } from "./api/generated";
@@ -134,6 +136,10 @@ export function AnalyzerPanel({
   const [trail, setTrail] = useState<IndexedEntry[]>([]);
   const [children, setChildren] = useState<EntryPage | null>(null);
   const [categories, setCategories] = useState<CategorySummary[] | null>(null);
+  const [categoryFiles, setCategoryFiles] = useState<EntryPage | null>(null);
+  const [activeCategory, setActiveCategory] = useState<FileCategory | null>(
+    null,
+  );
   const [largeFiles, setLargeFiles] = useState<EntryPage | null>(null);
   const [search, setSearch] = useState<EntryPage | null>(null);
   const [searchText, setSearchText] = useState("");
@@ -151,6 +157,8 @@ export function AnalyzerPanel({
     setTrail([]);
     setChildren(null);
     setCategories(null);
+    setCategoryFiles(null);
+    setActiveCategory(null);
     setLargeFiles(null);
     setSearch(null);
     setError(null);
@@ -205,6 +213,20 @@ export function AnalyzerPanel({
     setError(null);
     try {
       setLargeFiles(await getLargeFiles(scan.id, after));
+    } catch (reason: unknown) {
+      setError(errorMessage(reason));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function showCategory(category: FileCategory) {
+    if (!scan) return;
+    setLoading(true);
+    setError(null);
+    try {
+      setActiveCategory(category);
+      setCategoryFiles(await getFilesInCategory(scan.id, category));
     } catch (reason: unknown) {
       setError(errorMessage(reason));
     } finally {
@@ -418,7 +440,12 @@ export function AnalyzerPanel({
                 <ul className="category-list">
                   {categories.map((item) => (
                     <li key={item.category}>
-                      <span>{categoryLabels[item.category]}</span>
+                      <button
+                        className="secondary"
+                        onClick={() => void showCategory(item.category)}
+                      >
+                        {categoryLabels[item.category]}
+                      </button>
                       <strong>
                         {formatBytes(item.logical_size)} · {item.files_count}{" "}
                         шт.
@@ -430,6 +457,21 @@ export function AnalyzerPanel({
                 <p className="hint">Файлы для категоризации не найдены.</p>
               ))}
           </section>
+          {activeCategory && categoryFiles && (
+            <section
+              className="analysis-block"
+              aria-labelledby="category-files-title"
+            >
+              <h3 id="category-files-title">
+                {categoryLabels[activeCategory]}
+              </h3>
+              <EntryRows
+                items={categoryFiles.items}
+                onAction={(entry, action) => void actOnEntry(entry, action)}
+                onTrash={trash ? (entry) => void trashEntry(entry) : undefined}
+              />
+            </section>
+          )}
           <section className="analysis-block" aria-labelledby="search-title">
             <h3 id="search-title">Поиск по имени</h3>
             <form

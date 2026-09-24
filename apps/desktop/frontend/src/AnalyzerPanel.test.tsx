@@ -17,6 +17,7 @@ import {
 vi.mock("./api/generated", () => ({
   getChildren: vi.fn(),
   getCategories: vi.fn(),
+  getFilesInCategory: vi.fn(),
   getLargeFiles: vi.fn(),
   getScanRoot: vi.fn(),
   moveEntryToTrash: vi.fn(),
