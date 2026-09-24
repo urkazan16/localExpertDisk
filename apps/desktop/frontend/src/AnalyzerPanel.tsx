@@ -22,6 +22,22 @@ const kindLabels = {
   symlink: "Ссылка",
   other: "Другой объект",
 } as const;
+type FolderSort = "size_desc" | "name_asc";
+
+function sortFolderItems(items: IndexedEntry[], sort: FolderSort) {
+  return [...items].sort((left, right) => {
+    if (sort === "name_asc") {
+      return left.name.localeCompare(right.name, "ru", { sensitivity: "base" });
+    }
+    const sizeOrder =
+      BigInt(right.aggregate_size) > BigInt(left.aggregate_size)
+        ? 1
+        : BigInt(right.aggregate_size) < BigInt(left.aggregate_size)
+          ? -1
+          : 0;
+    return sizeOrder || left.name.localeCompare(right.name, "ru");
+  });
+}
 
 function EntryRows({
   items,
@@ -43,7 +59,7 @@ function EntryRows({
     <ul className="entry-list" aria-label="Содержимое каталога">
       {items.map((entry) => (
         <li key={entry.id}>
-          {onToggle && (
+          {onToggle && entry.kind !== "symlink" && entry.kind !== "other" && (
             <input
               aria-label={`Выбрать ${entry.name || entry.path}`}
               type="checkbox"
@@ -109,6 +125,7 @@ export function AnalyzerPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<IndexedEntry[]>([]);
+  const [folderSort, setFolderSort] = useState<FolderSort>("size_desc");
   const version = useRef(0);
   const usable = Boolean(enabled && scan && readableStates.has(scan.state));
 
@@ -202,6 +219,8 @@ export function AnalyzerPanel({
 
   async function trashEntry(entry: IndexedEntry) {
     if (!scan) return;
+    if (!window.confirm(`Переместить «${entry.name || entry.path}» в корзину?`))
+      return;
     setError(null);
     try {
       await moveEntryToTrash(scan.id, entry.id);
@@ -232,7 +251,8 @@ export function AnalyzerPanel({
         scan.id,
         selected.map((entry) => entry.id),
       );
-      setSelected([]);
+      const failed = new Set(result.failed_entry_ids);
+      setSelected((items) => items.filter((entry) => failed.has(entry.id)));
       if (result.failed_entry_ids.length) {
         setError(
           `Не удалось переместить ${result.failed_entry_ids.length} объектов.`,
@@ -283,8 +303,21 @@ export function AnalyzerPanel({
                 </button>
               )}
             </div>
+            <label className="folder-sort">
+              Сортировка
+              <select
+                aria-label="Сортировка содержимого каталога"
+                value={folderSort}
+                onChange={(event) =>
+                  setFolderSort(event.target.value as FolderSort)
+                }
+              >
+                <option value="size_desc">Размер: больше сначала</option>
+                <option value="name_asc">Имя: А–Я</option>
+              </select>
+            </label>
             <EntryRows
-              items={children.items}
+              items={sortFolderItems(children.items, folderSort)}
               selected={new Set(selected.map((entry) => entry.id))}
               onToggle={toggleSelection}
               onDirectory={(entry) => {

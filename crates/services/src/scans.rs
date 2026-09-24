@@ -261,16 +261,24 @@ impl ScanService {
         scan_id: &str,
         entry_ids: &[String],
     ) -> Result<BatchOperationResult, AppError> {
-        if entry_ids.is_empty() || entry_ids.len() > 100 {
+        let unique_ids = entry_ids.iter().collect::<std::collections::BTreeSet<_>>();
+        if entry_ids.is_empty() || entry_ids.len() > 100 || unique_ids.len() != entry_ids.len() {
             return Err(AppError::new(ErrorCode::InvalidTarget));
         }
         let mut moved_entry_ids = Vec::new();
         let mut failed_entry_ids = Vec::new();
+        let mut first_error = None;
         for entry_id in entry_ids {
             match self.move_to_trash(scan_id, entry_id) {
                 Ok(()) => moved_entry_ids.push(entry_id.clone()),
-                Err(_) => failed_entry_ids.push(entry_id.clone()),
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                    failed_entry_ids.push(entry_id.clone());
+                }
             }
+        }
+        if moved_entry_ids.is_empty() {
+            return Err(first_error.unwrap_or_else(|| AppError::new(ErrorCode::InvalidTarget)));
         }
         Ok(BatchOperationResult {
             moved_entry_ids,

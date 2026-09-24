@@ -444,6 +444,17 @@ fn trash_refuses_changed_and_protected_entries() {
 }
 
 #[test]
+fn batch_trash_rejects_duplicate_entry_ids_before_touching_the_file_system() {
+    let f = Fixture::new();
+    let service = f.service();
+    let error = service
+        .move_entries_to_trash("1", &["10".into(), "10".into()])
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidTarget);
+    service.shutdown().unwrap();
+}
+
+#[test]
 fn history_compares_persisted_scans_and_duplicate_candidates_are_size_groups() {
     let f = Fixture::new();
     fs::write(f.root.join("first"), [0; 8]).unwrap();

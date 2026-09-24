@@ -79,6 +79,38 @@ describe("Analyzer UI", () => {
     );
   });
 
+  it("sorts the current folder page by name on request", async () => {
+    vi.mocked(getChildren).mockResolvedValue({
+      items: [
+        {
+          id: "9",
+          parent_id: "8",
+          name: "Яблоко",
+          path: "/fixture/Яблоко",
+          kind: "file",
+          logical_size: "10",
+          aggregate_size: "10",
+        },
+        {
+          id: "10",
+          parent_id: "8",
+          name: "Арбуз",
+          path: "/fixture/Арбуз",
+          kind: "file",
+          logical_size: "20",
+          aggregate_size: "20",
+        },
+      ],
+      next_cursor: null,
+    });
+    render(<AnalyzerPanel enabled scan={scan} />);
+    await screen.findByText("Яблоко");
+    fireEvent.change(screen.getByLabelText("Сортировка содержимого каталога"), {
+      target: { value: "name_asc" },
+    });
+    expect(screen.getAllByRole("listitem")[0]).toHaveTextContent("Арбуз");
+  });
+
   it("queries large files and search only after the user requests them", async () => {
     vi.mocked(getLargeFiles).mockResolvedValue({
       items: [],
@@ -126,6 +158,7 @@ describe("Analyzer UI", () => {
 
   it("offers trash only when the platform advertises it and refreshes the folder", async () => {
     vi.mocked(moveEntryToTrash).mockResolvedValue();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<AnalyzerPanel enabled scan={scan} trash />);
     await screen.findByText("nested");
     fireEvent.click(screen.getByRole("button", { name: "В корзину" }));
@@ -150,5 +183,47 @@ describe("Analyzer UI", () => {
     await waitFor(() =>
       expect(moveEntriesToTrash).toHaveBeenCalledWith("7", ["9"]),
     );
+  });
+
+  it("keeps failed batch entries selected for a retry", async () => {
+    vi.mocked(getChildren).mockResolvedValue({
+      items: [
+        {
+          id: "9",
+          parent_id: "8",
+          name: "first",
+          path: "/fixture/first",
+          kind: "file",
+          logical_size: "10",
+          aggregate_size: "10",
+        },
+        {
+          id: "10",
+          parent_id: "8",
+          name: "second",
+          path: "/fixture/second",
+          kind: "file",
+          logical_size: "20",
+          aggregate_size: "20",
+        },
+      ],
+      next_cursor: null,
+    });
+    vi.mocked(moveEntriesToTrash).mockResolvedValue({
+      moved_entry_ids: ["9"],
+      failed_entry_ids: ["10"],
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<AnalyzerPanel enabled scan={scan} trash />);
+    await screen.findByText("first");
+    fireEvent.click(screen.getByLabelText("Выбрать first"));
+    fireEvent.click(screen.getByLabelText("Выбрать second"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Переместить в корзину" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Выбрать second")).toBeChecked(),
+    );
+    expect(screen.getByLabelText("Выбрать first")).not.toBeChecked();
   });
 });

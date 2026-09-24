@@ -305,6 +305,31 @@ progress {
 .entry-list button {
   padding: 6px 10px;
 }
+
+.folder-sort,
+.selection-bar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.folder-sort {
+  color: #536356;
+  font-size: 0.9rem;
+}
+
+.folder-sort select {
+  font: inherit;
+}
+
+.selection-bar {
+  background: #f4f5ee;
+  border: 1px solid #d6dcd0;
+  border-radius: 0.6rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+}
 .danger {
   color: #8c3832;
 }
