@@ -32,6 +32,8 @@ export type IndexedEntry = { id: string, parent_id: string | null, name: string,
  */
 aggregate_size: string, };
 export type EntryPage = { items: Array<IndexedEntry>, next_cursor: string | null, };
+export type FileCategory = "video" | "images" | "audio" | "documents" | "archives" | "applications" | "development" | "disk_images" | "databases" | "other";
+export type CategorySummary = { category: FileCategory, files_count: string, logical_size: string, };
 export type BatchOperationResult = { moved_entry_ids: Array<string>, failed_entry_ids: Array<string>, };
 export type OldFile = { entry: IndexedEntry, timestamp_ms: string, };
 export type OldFileCriterion = "modified" | "created" | "accessed";
@@ -70,6 +72,9 @@ export function getChildren(scanId: string, directoryId: string, afterId: string
 }
 export function getLargeFiles(scanId: string, afterId: string | null = null): Promise<EntryPage> {
   return invoke<EntryPage>('get_large_files', { scanId, afterId });
+}
+export function getCategories(scanId: string): Promise<CategorySummary[]> {
+  return invoke<CategorySummary[]>('get_categories', { scanId });
 }
 export function getOldFiles(scanId: string, criterion: OldFileCriterion, olderThanMs: string, minSize: string | null = null, afterId: string | null = null): Promise<OldFilePage> {
   return invoke<OldFilePage>('get_old_files', { scanId, criterion, olderThanMs, minSize, afterId });

@@ -236,6 +236,29 @@ pub struct EntryPage {
     pub next_cursor: Option<String>,
 }
 
+/// Coarse file grouping derived from the indexed filename extension.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FileCategory {
+    Video,
+    Images,
+    Audio,
+    Documents,
+    Archives,
+    Applications,
+    Development,
+    DiskImages,
+    Databases,
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct CategorySummary {
+    pub category: FileCategory,
+    pub files_count: String,
+    pub logical_size: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct BatchOperationResult {
     pub moved_entry_ids: Vec<String>,

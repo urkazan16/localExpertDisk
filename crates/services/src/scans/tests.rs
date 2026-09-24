@@ -166,6 +166,27 @@ fn completed_scan_exposes_bounded_folder_large_file_and_search_pages() {
 }
 
 #[test]
+fn categories_are_aggregated_from_indexed_files() {
+    let f = Fixture::new();
+    fs::write(f.root.join("photo.JPG"), [0; 7]).unwrap();
+    fs::write(f.root.join("notes.txt"), [0; 3]).unwrap();
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    let session = service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    assert_eq!(wait_terminal(&rx).state, ScanState::Completed);
+    let categories = service.categories(&session.id).unwrap();
+    assert!(categories
+        .iter()
+        .any(|item| item.category == domain::FileCategory::Images && item.logical_size == "7"));
+    assert!(categories
+        .iter()
+        .any(|item| item.category == domain::FileCategory::Documents && item.logical_size == "3"));
+    service.shutdown().unwrap();
+}
+
+#[test]
 fn old_files_are_keyset_paginated_and_reject_invalid_cutoffs() {
     let f = Fixture::new();
     for index in 0..101 {

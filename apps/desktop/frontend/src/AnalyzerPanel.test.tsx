@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AnalyzerPanel } from "./AnalyzerPanel";
 import {
   getChildren,
+  getCategories,
   getLargeFiles,
   getScanRoot,
   moveEntriesToTrash,
@@ -15,6 +16,7 @@ import {
 
 vi.mock("./api/generated", () => ({
   getChildren: vi.fn(),
+  getCategories: vi.fn(),
   getLargeFiles: vi.fn(),
   getScanRoot: vi.fn(),
   moveEntryToTrash: vi.fn(),
@@ -52,6 +54,7 @@ const root = {
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(getScanRoot).mockResolvedValue(root);
+  vi.mocked(getCategories).mockResolvedValue([]);
   vi.mocked(getChildren).mockResolvedValue({
     items: [
       {

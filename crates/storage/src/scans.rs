@@ -1,9 +1,9 @@
 use crate::{storage_error, SqliteStorage};
 use analyzer::Totals;
 use domain::{
-    AppError, DuplicateGroup, DuplicateGroupPage, EntryPage, ErrorCode, IndexedEntry,
-    IndexedEntryKind, OldFile, OldFileCriterion, OldFilePage, ScanComparison, ScanHistoryPage,
-    ScanIssue, ScanIssuePage, ScanSession, ScanState,
+    AppError, CategorySummary, DuplicateGroup, DuplicateGroupPage, EntryPage, ErrorCode,
+    FileCategory, IndexedEntry, IndexedEntryKind, OldFile, OldFileCriterion, OldFilePage,
+    ScanComparison, ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState,
 };
 use filesystem::native::{decode_path, encode_path, EntryKind, EntryMetadata};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -558,6 +558,47 @@ impl SqliteStorage {
             items: rows,
             next_cursor,
         })
+    }
+
+    pub fn categories(&self, scan_id: i64) -> Result<Vec<CategorySummary>, AppError> {
+        self.ensure_queryable(scan_id)?;
+        const CATEGORY: &str = "CASE
+            WHEN lower(name) GLOB '*.mp4' OR lower(name) GLOB '*.mkv' OR lower(name) GLOB '*.mov' OR lower(name) GLOB '*.avi' OR lower(name) GLOB '*.webm' THEN 'video'
+            WHEN lower(name) GLOB '*.jpg' OR lower(name) GLOB '*.jpeg' OR lower(name) GLOB '*.png' OR lower(name) GLOB '*.gif' OR lower(name) GLOB '*.heic' OR lower(name) GLOB '*.webp' THEN 'images'
+            WHEN lower(name) GLOB '*.mp3' OR lower(name) GLOB '*.m4a' OR lower(name) GLOB '*.wav' OR lower(name) GLOB '*.flac' OR lower(name) GLOB '*.aac' THEN 'audio'
+            WHEN lower(name) GLOB '*.pdf' OR lower(name) GLOB '*.doc' OR lower(name) GLOB '*.docx' OR lower(name) GLOB '*.xls' OR lower(name) GLOB '*.xlsx' OR lower(name) GLOB '*.pptx' OR lower(name) GLOB '*.txt' THEN 'documents'
+            WHEN lower(name) GLOB '*.zip' OR lower(name) GLOB '*.tar' OR lower(name) GLOB '*.gz' OR lower(name) GLOB '*.7z' OR lower(name) GLOB '*.rar' THEN 'archives'
+            WHEN lower(name) GLOB '*.app' OR lower(name) GLOB '*.exe' OR lower(name) GLOB '*.dmg' THEN 'applications'
+            WHEN lower(name) GLOB '*.rs' OR lower(name) GLOB '*.ts' OR lower(name) GLOB '*.tsx' OR lower(name) GLOB '*.js' OR lower(name) GLOB '*.py' OR lower(name) GLOB '*.java' THEN 'development'
+            WHEN lower(name) GLOB '*.iso' OR lower(name) GLOB '*.img' THEN 'disk_images'
+            WHEN lower(name) GLOB '*.sqlite' OR lower(name) GLOB '*.db' OR lower(name) GLOB '*.sql' THEN 'databases'
+            ELSE 'other' END";
+        let query = format!("SELECT {CATEGORY},COUNT(*),COALESCE(SUM(logical_size),0) FROM entries WHERE scan_id=?1 AND kind='file' GROUP BY 1 ORDER BY 3 DESC,1");
+        self.connection
+            .prepare(&query)
+            .map_err(storage_error)?
+            .query_map([scan_id], |row| {
+                let category = match row.get::<_, String>(0)?.as_str() {
+                    "video" => FileCategory::Video,
+                    "images" => FileCategory::Images,
+                    "audio" => FileCategory::Audio,
+                    "documents" => FileCategory::Documents,
+                    "archives" => FileCategory::Archives,
+                    "applications" => FileCategory::Applications,
+                    "development" => FileCategory::Development,
+                    "disk_images" => FileCategory::DiskImages,
+                    "databases" => FileCategory::Databases,
+                    _ => FileCategory::Other,
+                };
+                Ok(CategorySummary {
+                    category,
+                    files_count: row.get::<_, i64>(1)?.to_string(),
+                    logical_size: row.get::<_, i64>(2)?.to_string(),
+                })
+            })
+            .map_err(storage_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(storage_error)
     }
 
     pub fn old_files(

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   getChildren,
+  getCategories,
   getLargeFiles,
   getScanRoot,
   moveEntriesToTrash,
@@ -9,6 +10,7 @@ import {
   revealEntry,
   searchEntries,
   type EntryPage,
+  type CategorySummary,
   type IndexedEntry,
   type ScanSession,
 } from "./api/generated";
@@ -21,6 +23,18 @@ const kindLabels = {
   file: "Файл",
   symlink: "Ссылка",
   other: "Другой объект",
+} as const;
+const categoryLabels = {
+  video: "Видео",
+  images: "Изображения",
+  audio: "Аудио",
+  documents: "Документы",
+  archives: "Архивы",
+  applications: "Приложения",
+  development: "Разработка",
+  disk_images: "Образы дисков",
+  databases: "Базы данных",
+  other: "Другое",
 } as const;
 type FolderSort = "size_desc" | "name_asc";
 
@@ -119,6 +133,7 @@ export function AnalyzerPanel({
   const [directory, setDirectory] = useState<IndexedEntry | null>(null);
   const [trail, setTrail] = useState<IndexedEntry[]>([]);
   const [children, setChildren] = useState<EntryPage | null>(null);
+  const [categories, setCategories] = useState<CategorySummary[] | null>(null);
   const [largeFiles, setLargeFiles] = useState<EntryPage | null>(null);
   const [search, setSearch] = useState<EntryPage | null>(null);
   const [searchText, setSearchText] = useState("");
@@ -135,6 +150,7 @@ export function AnalyzerPanel({
     setDirectory(null);
     setTrail([]);
     setChildren(null);
+    setCategories(null);
     setLargeFiles(null);
     setSearch(null);
     setError(null);
@@ -143,11 +159,15 @@ export function AnalyzerPanel({
     setLoading(true);
     getScanRoot(scan.id)
       .then(async (entry) => {
-        const page = await getChildren(scan.id, entry.id);
+        const [page, categoryItems] = await Promise.all([
+          getChildren(scan.id, entry.id),
+          getCategories(scan.id),
+        ]);
         if (current === version.current) {
           setRoot(entry);
           setDirectory(entry);
           setChildren(page);
+          setCategories(categoryItems);
         }
       })
       .catch((reason: unknown) => {
@@ -387,6 +407,28 @@ export function AnalyzerPanel({
                 )}
               </>
             )}
+          </section>
+          <section
+            className="analysis-block"
+            aria-labelledby="categories-title"
+          >
+            <h3 id="categories-title">Категории файлов</h3>
+            {categories &&
+              (categories.length ? (
+                <ul className="category-list">
+                  {categories.map((item) => (
+                    <li key={item.category}>
+                      <span>{categoryLabels[item.category]}</span>
+                      <strong>
+                        {formatBytes(item.logical_size)} · {item.files_count}{" "}
+                        шт.
+                      </strong>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="hint">Файлы для категоризации не найдены.</p>
+              ))}
           </section>
           <section className="analysis-block" aria-labelledby="search-title">
             <h3 id="search-title">Поиск по имени</h3>
