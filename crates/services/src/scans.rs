@@ -202,6 +202,25 @@ impl ScanService {
     pub fn large_files(&self, scan_id: &str, after: Option<&str>) -> Result<EntryPage, AppError> {
         guard(&self.shared.storage)?.large_files(parse_id(scan_id)?, after)
     }
+    pub fn filtered_large_files(
+        &self,
+        scan_id: &str,
+        min_size: &str,
+        category: Option<domain::FileCategory>,
+        sort: domain::FileSort,
+    ) -> Result<EntryPage, AppError> {
+        let min_size = min_size
+            .parse::<i64>()
+            .ok()
+            .filter(|value| *value >= 0)
+            .ok_or_else(|| AppError::new(ErrorCode::InvalidTarget))?;
+        guard(&self.shared.storage)?.filtered_large_files(
+            parse_id(scan_id)?,
+            min_size,
+            category,
+            sort,
+        )
+    }
     pub fn categories(&self, scan_id: &str) -> Result<Vec<CategorySummary>, AppError> {
         guard(&self.shared.storage)?.categories(parse_id(scan_id)?)
     }

@@ -2,7 +2,7 @@
 
 use domain::{
     AppError, AppInfo, BatchOperationResult, CategorySummary, DuplicateGroupPage, EntryPage,
-    ErrorCode, FileCategory, IndexedEntry, OldFileCriterion, OldFilePage, ScanComparison,
+    ErrorCode, FileCategory, FileSort, IndexedEntry, OldFileCriterion, OldFilePage, ScanComparison,
     ScanHistoryPage, ScanIssuePage, ScanSession, StartScanRequest, VolumeInfo,
 };
 use filesystem::volumes::{LocalVolumes, VolumeProvider};
@@ -110,6 +110,21 @@ async fn get_large_files(
     tauri::async_runtime::spawn_blocking(move || service.large_files(&scan_id, after_id.as_deref()))
         .await
         .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn get_filtered_large_files(
+    state: tauri::State<'_, AppState>,
+    scan_id: String,
+    min_size: String,
+    category: Option<FileCategory>,
+    sort: FileSort,
+) -> Result<EntryPage, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        service.filtered_large_files(&scan_id, &min_size, category, sort)
+    })
+    .await
+    .map_err(|_| internal())?
 }
 #[tauri::command]
 async fn get_categories(
@@ -289,6 +304,7 @@ fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         get_scan_root,
         get_children,
         get_large_files,
+        get_filtered_large_files,
         get_categories,
         get_files_in_category,
         get_old_files,

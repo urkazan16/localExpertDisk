@@ -183,6 +183,16 @@ fn categories_are_aggregated_from_indexed_files() {
     assert!(categories
         .iter()
         .any(|item| item.category == domain::FileCategory::Documents && item.logical_size == "3"));
+    let filtered = service
+        .filtered_large_files(
+            &session.id,
+            "5",
+            Some(domain::FileCategory::Images),
+            domain::FileSort::SizeDesc,
+        )
+        .unwrap();
+    assert_eq!(filtered.items.len(), 1);
+    assert_eq!(filtered.items[0].name, "photo.JPG");
     service.shutdown().unwrap();
 }
 

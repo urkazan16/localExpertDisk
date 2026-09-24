@@ -2,7 +2,7 @@ use crate::{storage_error, SqliteStorage};
 use analyzer::Totals;
 use domain::{
     AppError, CategorySummary, DuplicateGroup, DuplicateGroupPage, EntryPage, ErrorCode,
-    FileCategory, IndexedEntry, IndexedEntryKind, OldFile, OldFileCriterion, OldFilePage,
+    FileCategory, FileSort, IndexedEntry, IndexedEntryKind, OldFile, OldFileCriterion, OldFilePage,
     ScanComparison, ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState,
 };
 use filesystem::native::{decode_path, encode_path, EntryKind, EntryMetadata};
@@ -582,6 +582,35 @@ impl SqliteStorage {
         Ok(EntryPage {
             items: rows,
             next_cursor,
+        })
+    }
+
+    pub fn filtered_large_files(
+        &self,
+        scan_id: i64,
+        min_size: i64,
+        category: Option<FileCategory>,
+        sort: FileSort,
+    ) -> Result<EntryPage, AppError> {
+        self.ensure_queryable(scan_id)?;
+        let order = match sort {
+            FileSort::SizeDesc => "logical_size DESC,id",
+            FileSort::ModifiedDesc => "modified_at_ms DESC,id",
+            FileSort::NameAsc => "name COLLATE NOCASE,id",
+        };
+        let query = format!("WITH classified AS (SELECT e.*, {FILE_CATEGORY_SQL} AS category FROM entries e WHERE e.scan_id=?1 AND e.kind='file') SELECT id,parent_id,name,path,kind,logical_size,logical_size FROM classified WHERE logical_size>=?2 AND (?3 IS NULL OR category=?3) ORDER BY {order} LIMIT 100");
+        let value = category.map(category_key);
+        let rows = self
+            .connection
+            .prepare(&query)
+            .map_err(storage_error)?
+            .query_map(params![scan_id, min_size, value], read_entry)
+            .map_err(storage_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(storage_error)?;
+        Ok(EntryPage {
+            items: rows,
+            next_cursor: None,
         })
     }
 

@@ -1,8 +1,9 @@
 use domain::{
     AppError, AppInfo, BatchOperationResult, Capabilities, CategorySummary, DuplicateGroup,
-    DuplicateGroupPage, EntryPage, ErrorCode, FileCategory, IndexedEntry, IndexedEntryKind,
-    OldFile, OldFileCriterion, OldFilePage, Platform, ScanComparison, ScanHistoryPage, ScanIssue,
-    ScanIssuePage, ScanSession, ScanState, SnapshotInfo, StartScanRequest, VolumeInfo,
+    DuplicateGroupPage, EntryPage, ErrorCode, FileCategory, FileSort, IndexedEntry,
+    IndexedEntryKind, OldFile, OldFileCriterion, OldFilePage, Platform, ScanComparison,
+    ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState, SnapshotInfo,
+    StartScanRequest, VolumeInfo,
 };
 use std::{error::Error, path::PathBuf};
 use ts_rs::TS;
@@ -30,6 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         IndexedEntry::decl(&config),
         EntryPage::decl(&config),
         FileCategory::decl(&config),
+        FileSort::decl(&config),
         CategorySummary::decl(&config),
         BatchOperationResult::decl(&config),
         OldFile::decl(&config),
@@ -75,6 +77,9 @@ export function getChildren(scanId: string, directoryId: string, afterId: string
 }
 export function getLargeFiles(scanId: string, afterId: string | null = null): Promise<EntryPage> {
   return invoke<EntryPage>('get_large_files', { scanId, afterId });
+}
+export function getFilteredLargeFiles(scanId: string, minSize: string, category: FileCategory | null, sort: FileSort): Promise<EntryPage> {
+  return invoke<EntryPage>('get_filtered_large_files', { scanId, minSize, category, sort });
 }
 export function getCategories(scanId: string): Promise<CategorySummary[]> {
   return invoke<CategorySummary[]>('get_categories', { scanId });

@@ -259,6 +259,14 @@ pub struct CategorySummary {
     pub logical_size: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FileSort {
+    SizeDesc,
+    ModifiedDesc,
+    NameAsc,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct BatchOperationResult {
     pub moved_entry_ids: Vec<String>,
