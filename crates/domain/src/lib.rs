@@ -220,6 +220,19 @@ pub struct EntryPage {
     pub next_cursor: Option<String>,
 }
 
+/// A file selected from the local index by its last known modification time.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct OldFile {
+    pub entry: IndexedEntry,
+    pub modified_at_ms: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct OldFilePage {
+    pub items: Vec<OldFile>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct ScanHistoryPage {
     pub items: Vec<ScanSession>,

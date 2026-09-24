@@ -1,7 +1,8 @@
 use domain::{
     AppError, AppInfo, Capabilities, DuplicateGroup, DuplicateGroupPage, EntryPage, ErrorCode,
-    IndexedEntry, IndexedEntryKind, Platform, ScanComparison, ScanHistoryPage, ScanIssue,
-    ScanIssuePage, ScanSession, ScanState, StartScanRequest, VolumeInfo,
+    IndexedEntry, IndexedEntryKind, OldFile, OldFilePage, Platform, ScanComparison,
+    ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState, StartScanRequest,
+    VolumeInfo,
 };
 use std::{error::Error, path::PathBuf};
 use ts_rs::TS;
@@ -27,6 +28,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         IndexedEntryKind::decl(&config),
         IndexedEntry::decl(&config),
         EntryPage::decl(&config),
+        OldFile::decl(&config),
+        OldFilePage::decl(&config),
         ScanHistoryPage::decl(&config),
         ScanComparison::decl(&config),
         DuplicateGroup::decl(&config),
@@ -67,6 +70,9 @@ export function getChildren(scanId: string, directoryId: string, afterId: string
 }
 export function getLargeFiles(scanId: string, afterId: string | null = null): Promise<EntryPage> {
   return invoke<EntryPage>('get_large_files', { scanId, afterId });
+}
+export function getOldFiles(scanId: string, olderThanMs: string, afterId: string | null = null): Promise<OldFilePage> {
+  return invoke<OldFilePage>('get_old_files', { scanId, olderThanMs, afterId });
 }
 export function searchEntries(scanId: string, text: string, afterId: string | null = null): Promise<EntryPage> {
   return invoke<EntryPage>('search_entries', { scanId, text, afterId });

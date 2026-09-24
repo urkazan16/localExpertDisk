@@ -1,7 +1,8 @@
 use analyzer::Totals;
 use domain::{
-    AppError, AppInfo, DuplicateGroupPage, EntryPage, ErrorCode, IndexedEntry, ScanComparison,
-    ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState, StartScanRequest,
+    AppError, AppInfo, DuplicateGroupPage, EntryPage, ErrorCode, IndexedEntry, OldFilePage,
+    ScanComparison, ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState,
+    StartScanRequest,
 };
 use filesystem::{
     native::{EntryKind, FileSystemProvider, NativeFileSystem},
@@ -162,6 +163,19 @@ impl ScanService {
     }
     pub fn large_files(&self, scan_id: &str, after: Option<&str>) -> Result<EntryPage, AppError> {
         guard(&self.shared.storage)?.large_files(parse_id(scan_id)?, after)
+    }
+    pub fn old_files(
+        &self,
+        scan_id: &str,
+        older_than_ms: &str,
+        after: Option<&str>,
+    ) -> Result<OldFilePage, AppError> {
+        let older_than_ms = older_than_ms
+            .parse::<i64>()
+            .ok()
+            .filter(|value| *value >= 0)
+            .ok_or_else(|| AppError::new(ErrorCode::InvalidTarget))?;
+        guard(&self.shared.storage)?.old_files(parse_id(scan_id)?, older_than_ms, after)
     }
     pub fn search(
         &self,

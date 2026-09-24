@@ -31,6 +31,8 @@ export type IndexedEntry = { id: string, parent_id: string | null, name: string,
  */
 aggregate_size: string, };
 export type EntryPage = { items: Array<IndexedEntry>, next_cursor: string | null, };
+export type OldFile = { entry: IndexedEntry, modified_at_ms: string, };
+export type OldFilePage = { items: Array<OldFile>, next_cursor: string | null, };
 export type ScanHistoryPage = { items: Array<ScanSession>, next_cursor: string | null, };
 export type ScanComparison = { newer_scan_id: string, older_scan_id: string, files_delta: string, directories_delta: string, logical_size_delta: string, };
 export type DuplicateGroup = { size: string, files_count: string, reclaimable_size: string, };
@@ -65,6 +67,9 @@ export function getChildren(scanId: string, directoryId: string, afterId: string
 }
 export function getLargeFiles(scanId: string, afterId: string | null = null): Promise<EntryPage> {
   return invoke<EntryPage>('get_large_files', { scanId, afterId });
+}
+export function getOldFiles(scanId: string, olderThanMs: string, afterId: string | null = null): Promise<OldFilePage> {
+  return invoke<OldFilePage>('get_old_files', { scanId, olderThanMs, afterId });
 }
 export function searchEntries(scanId: string, text: string, afterId: string | null = null): Promise<EntryPage> {
   return invoke<EntryPage>('search_entries', { scanId, text, afterId });

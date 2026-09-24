@@ -133,6 +133,49 @@ fn completed_scan_exposes_bounded_folder_large_file_and_search_pages() {
         service.search(&session.id, "small", None).unwrap().items[0].name,
         "small.txt"
     );
+    let old_files = service
+        .old_files(&session.id, &i64::MAX.to_string(), None)
+        .unwrap();
+    assert_eq!(old_files.items.len(), 2);
+    assert!(old_files
+        .items
+        .iter()
+        .all(|file| !file.modified_at_ms.is_empty()));
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn old_files_are_keyset_paginated_and_reject_invalid_cutoffs() {
+    let f = Fixture::new();
+    for index in 0..101 {
+        fs::write(f.root.join(format!("old-{index:03}")), b"x").unwrap();
+    }
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    let session = service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    assert_eq!(wait_terminal(&rx).state, ScanState::Completed);
+    let first = service
+        .old_files(&session.id, &i64::MAX.to_string(), None)
+        .unwrap();
+    assert_eq!(first.items.len(), 100);
+    let second = service
+        .old_files(
+            &session.id,
+            &i64::MAX.to_string(),
+            first.next_cursor.as_deref(),
+        )
+        .unwrap();
+    assert_eq!(second.items.len(), 1);
+    assert_ne!(
+        first.items.last().unwrap().entry.id,
+        second.items[0].entry.id
+    );
+    assert_eq!(
+        service.old_files(&session.id, "-1", None).unwrap_err().code,
+        ErrorCode::InvalidTarget
+    );
     service.shutdown().unwrap();
 }
 

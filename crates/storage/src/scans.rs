@@ -2,8 +2,8 @@ use crate::{storage_error, SqliteStorage};
 use analyzer::Totals;
 use domain::{
     AppError, DuplicateGroup, DuplicateGroupPage, EntryPage, ErrorCode, IndexedEntry,
-    IndexedEntryKind, ScanComparison, ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession,
-    ScanState,
+    IndexedEntryKind, OldFile, OldFilePage, ScanComparison, ScanHistoryPage, ScanIssue,
+    ScanIssuePage, ScanSession, ScanState,
 };
 use filesystem::native::{decode_path, encode_path, EntryKind, EntryMetadata};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -100,6 +100,19 @@ fn parse_large_cursor(cursor: Option<&str>) -> Result<(i64, i64), AppError> {
     let size = size.parse::<i64>().ok().filter(|value| *value >= 0);
     let id = id.parse::<i64>().ok().filter(|value| *value > 0);
     size.zip(id)
+        .ok_or_else(|| AppError::new(ErrorCode::ScanNotFound))
+}
+fn parse_old_files_cursor(cursor: Option<&str>) -> Result<(i64, i64), AppError> {
+    let Some(cursor) = cursor else {
+        return Ok((i64::MIN, 0));
+    };
+    let Some((modified_at_ms, id)) = cursor.split_once(':') else {
+        return Err(AppError::new(ErrorCode::ScanNotFound));
+    };
+    let modified_at_ms = modified_at_ms.parse::<i64>().ok();
+    let id = id.parse::<i64>().ok().filter(|value| *value > 0);
+    modified_at_ms
+        .zip(id)
         .ok_or_else(|| AppError::new(ErrorCode::ScanNotFound))
 }
 const SELECT_SESSION: &str = "SELECT id,root_display,state,files_count,directories_count,symlinks_count,skipped_count,logical_size,errors_count,started_at_ms,finished_at_ms,failure FROM scan_sessions";
@@ -453,6 +466,45 @@ impl SqliteStorage {
             None
         };
         Ok(EntryPage {
+            items: rows,
+            next_cursor,
+        })
+    }
+
+    pub fn old_files(
+        &self,
+        scan_id: i64,
+        older_than_ms: i64,
+        cursor: Option<&str>,
+    ) -> Result<OldFilePage, AppError> {
+        self.ensure_queryable(scan_id)?;
+        let (modified_at_ms, id) = parse_old_files_cursor(cursor)?;
+        let mut statement = self.connection.prepare(
+            "SELECT e.id,e.parent_id,e.name,e.path,e.kind,e.logical_size,e.logical_size,e.modified_at_ms
+             FROM entries e
+             WHERE e.scan_id=?1 AND e.kind='file' AND e.modified_at_ms IS NOT NULL
+             AND e.modified_at_ms<?2
+             AND (e.modified_at_ms>?3 OR (e.modified_at_ms=?3 AND e.id>?4))
+             ORDER BY e.modified_at_ms,e.id LIMIT 101",
+        ).map_err(storage_error)?;
+        let mut rows = statement
+            .query_map(params![scan_id, older_than_ms, modified_at_ms, id], |row| {
+                Ok(OldFile {
+                    entry: read_entry(row)?,
+                    modified_at_ms: row.get::<_, i64>(7)?.to_string(),
+                })
+            })
+            .map_err(storage_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(storage_error)?;
+        let next_cursor = if rows.len() > 100 {
+            rows.pop();
+            rows.last()
+                .map(|file| format!("{}:{}", file.modified_at_ms, file.entry.id))
+        } else {
+            None
+        };
+        Ok(OldFilePage {
             items: rows,
             next_cursor,
         })

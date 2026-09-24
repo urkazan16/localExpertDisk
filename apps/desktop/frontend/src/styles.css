@@ -311,6 +311,39 @@ progress {
   font-size: 13px;
   font-weight: 600;
 }
+.old-files-filter {
+  align-items: center;
+  display: flex;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 10px;
+  margin: 14px 0;
+}
+.old-files-list {
+  list-style: none;
+  margin: 14px 0;
+  max-height: 430px;
+  overflow: auto;
+  padding: 0;
+}
+.old-files-list li {
+  border-bottom: 1px solid #e1e6d9;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  padding: 10px 0;
+}
+.old-files-list strong,
+.old-files-list span,
+.old-files-list time {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.old-files-list div > span,
+.old-files-list time {
+  color: #657060;
+  font-size: 12px;
+}
 @media (max-width: 680px) {
   .path-row {
     flex-direction: column;

@@ -11,6 +11,7 @@ import { errorMessage } from "./api/errors";
 import { ScanPanel } from "./ScanPanel";
 import { AnalyzerPanel } from "./AnalyzerPanel";
 import { HistoryDuplicatesPanel } from "./HistoryDuplicatesPanel";
+import { OldFilesPanel } from "./OldFilesPanel";
 
 type State =
   | { status: "loading" }
@@ -130,6 +131,7 @@ export function App() {
         </section>
         <ScanPanel enabled={state.status === "ready"} onScanChange={setScan} />
         <AnalyzerPanel enabled={state.status === "ready"} scan={scan} />
+        <OldFilesPanel enabled={state.status === "ready"} scan={scan} />
         <HistoryDuplicatesPanel enabled={state.status === "ready"} />
       </main>
       <footer>

@@ -1,8 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use domain::{
-    AppError, AppInfo, DuplicateGroupPage, EntryPage, ErrorCode, IndexedEntry, ScanComparison,
-    ScanHistoryPage, ScanIssuePage, ScanSession, StartScanRequest, VolumeInfo,
+    AppError, AppInfo, DuplicateGroupPage, EntryPage, ErrorCode, IndexedEntry, OldFilePage,
+    ScanComparison, ScanHistoryPage, ScanIssuePage, ScanSession, StartScanRequest, VolumeInfo,
 };
 use filesystem::volumes::{LocalVolumes, VolumeProvider};
 use services::scans::ScanService;
@@ -111,6 +111,20 @@ async fn get_large_files(
         .map_err(|_| internal())?
 }
 #[tauri::command]
+async fn get_old_files(
+    state: tauri::State<'_, AppState>,
+    scan_id: String,
+    older_than_ms: String,
+    after_id: Option<String>,
+) -> Result<OldFilePage, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        service.old_files(&scan_id, &older_than_ms, after_id.as_deref())
+    })
+    .await
+    .map_err(|_| internal())?
+}
+#[tauri::command]
 async fn search_entries(
     state: tauri::State<'_, AppState>,
     scan_id: String,
@@ -199,6 +213,7 @@ fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         get_scan_root,
         get_children,
         get_large_files,
+        get_old_files,
         search_entries,
         open_entry,
         reveal_entry,
