@@ -76,6 +76,9 @@ export function getLargeFiles(scanId: string, afterId: string | null = null): Pr
 export function getCategories(scanId: string): Promise<CategorySummary[]> {
   return invoke<CategorySummary[]>('get_categories', { scanId });
 }
+export function getFilesInCategory(scanId: string, category: FileCategory, afterId: string | null = null): Promise<EntryPage> {
+  return invoke<EntryPage>('get_files_in_category', { scanId, category, afterId });
+}
 export function getOldFiles(scanId: string, criterion: OldFileCriterion, olderThanMs: string, minSize: string | null = null, afterId: string | null = null): Promise<OldFilePage> {
   return invoke<OldFilePage>('get_old_files', { scanId, criterion, olderThanMs, minSize, afterId });
 }

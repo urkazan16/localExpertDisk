@@ -133,6 +133,31 @@ fn parse_old_files_cursor(cursor: Option<&str>) -> Result<(i64, i64), AppError> 
         .ok_or_else(|| AppError::new(ErrorCode::ScanNotFound))
 }
 const SELECT_SESSION: &str = "SELECT id,root_display,state,files_count,directories_count,symlinks_count,skipped_count,logical_size,allocated_size,errors_count,started_at_ms,finished_at_ms,failure FROM scan_sessions";
+const FILE_CATEGORY_SQL: &str = "CASE
+ WHEN lower(name) GLOB '*.mp4' OR lower(name) GLOB '*.mkv' OR lower(name) GLOB '*.mov' OR lower(name) GLOB '*.avi' OR lower(name) GLOB '*.webm' THEN 'video'
+ WHEN lower(name) GLOB '*.jpg' OR lower(name) GLOB '*.jpeg' OR lower(name) GLOB '*.png' OR lower(name) GLOB '*.gif' OR lower(name) GLOB '*.heic' OR lower(name) GLOB '*.webp' THEN 'images'
+ WHEN lower(name) GLOB '*.mp3' OR lower(name) GLOB '*.m4a' OR lower(name) GLOB '*.wav' OR lower(name) GLOB '*.flac' OR lower(name) GLOB '*.aac' THEN 'audio'
+ WHEN lower(name) GLOB '*.pdf' OR lower(name) GLOB '*.doc' OR lower(name) GLOB '*.docx' OR lower(name) GLOB '*.xls' OR lower(name) GLOB '*.xlsx' OR lower(name) GLOB '*.pptx' OR lower(name) GLOB '*.txt' THEN 'documents'
+ WHEN lower(name) GLOB '*.zip' OR lower(name) GLOB '*.tar' OR lower(name) GLOB '*.gz' OR lower(name) GLOB '*.7z' OR lower(name) GLOB '*.rar' THEN 'archives'
+ WHEN lower(name) GLOB '*.app' OR lower(name) GLOB '*.exe' OR lower(name) GLOB '*.dmg' THEN 'applications'
+ WHEN lower(name) GLOB '*.rs' OR lower(name) GLOB '*.ts' OR lower(name) GLOB '*.tsx' OR lower(name) GLOB '*.js' OR lower(name) GLOB '*.py' OR lower(name) GLOB '*.java' THEN 'development'
+ WHEN lower(name) GLOB '*.iso' OR lower(name) GLOB '*.img' THEN 'disk_images'
+ WHEN lower(name) GLOB '*.sqlite' OR lower(name) GLOB '*.db' OR lower(name) GLOB '*.sql' THEN 'databases'
+ ELSE 'other' END";
+fn category_key(category: FileCategory) -> &'static str {
+    match category {
+        FileCategory::Video => "video",
+        FileCategory::Images => "images",
+        FileCategory::Audio => "audio",
+        FileCategory::Documents => "documents",
+        FileCategory::Archives => "archives",
+        FileCategory::Applications => "applications",
+        FileCategory::Development => "development",
+        FileCategory::DiskImages => "disk_images",
+        FileCategory::Databases => "databases",
+        FileCategory::Other => "other",
+    }
+}
 
 fn aggregate(connection: &Connection, id: i64) -> Result<Totals, AppError> {
     connection
@@ -562,18 +587,7 @@ impl SqliteStorage {
 
     pub fn categories(&self, scan_id: i64) -> Result<Vec<CategorySummary>, AppError> {
         self.ensure_queryable(scan_id)?;
-        const CATEGORY: &str = "CASE
-            WHEN lower(name) GLOB '*.mp4' OR lower(name) GLOB '*.mkv' OR lower(name) GLOB '*.mov' OR lower(name) GLOB '*.avi' OR lower(name) GLOB '*.webm' THEN 'video'
-            WHEN lower(name) GLOB '*.jpg' OR lower(name) GLOB '*.jpeg' OR lower(name) GLOB '*.png' OR lower(name) GLOB '*.gif' OR lower(name) GLOB '*.heic' OR lower(name) GLOB '*.webp' THEN 'images'
-            WHEN lower(name) GLOB '*.mp3' OR lower(name) GLOB '*.m4a' OR lower(name) GLOB '*.wav' OR lower(name) GLOB '*.flac' OR lower(name) GLOB '*.aac' THEN 'audio'
-            WHEN lower(name) GLOB '*.pdf' OR lower(name) GLOB '*.doc' OR lower(name) GLOB '*.docx' OR lower(name) GLOB '*.xls' OR lower(name) GLOB '*.xlsx' OR lower(name) GLOB '*.pptx' OR lower(name) GLOB '*.txt' THEN 'documents'
-            WHEN lower(name) GLOB '*.zip' OR lower(name) GLOB '*.tar' OR lower(name) GLOB '*.gz' OR lower(name) GLOB '*.7z' OR lower(name) GLOB '*.rar' THEN 'archives'
-            WHEN lower(name) GLOB '*.app' OR lower(name) GLOB '*.exe' OR lower(name) GLOB '*.dmg' THEN 'applications'
-            WHEN lower(name) GLOB '*.rs' OR lower(name) GLOB '*.ts' OR lower(name) GLOB '*.tsx' OR lower(name) GLOB '*.js' OR lower(name) GLOB '*.py' OR lower(name) GLOB '*.java' THEN 'development'
-            WHEN lower(name) GLOB '*.iso' OR lower(name) GLOB '*.img' THEN 'disk_images'
-            WHEN lower(name) GLOB '*.sqlite' OR lower(name) GLOB '*.db' OR lower(name) GLOB '*.sql' THEN 'databases'
-            ELSE 'other' END";
-        let query = format!("SELECT {CATEGORY},COUNT(*),COALESCE(SUM(logical_size),0) FROM entries WHERE scan_id=?1 AND kind='file' GROUP BY 1 ORDER BY 3 DESC,1");
+        let query = format!("SELECT {FILE_CATEGORY_SQL},COUNT(*),COALESCE(SUM(logical_size),0) FROM entries WHERE scan_id=?1 AND kind='file' GROUP BY 1 ORDER BY 3 DESC,1");
         self.connection
             .prepare(&query)
             .map_err(storage_error)?
@@ -601,6 +615,33 @@ impl SqliteStorage {
             .map_err(storage_error)
     }
 
+    pub fn files_in_category(
+        &self,
+        scan_id: i64,
+        category: FileCategory,
+        after: i64,
+    ) -> Result<EntryPage, AppError> {
+        self.ensure_queryable(scan_id)?;
+        let query = format!("WITH classified AS (SELECT e.*, {FILE_CATEGORY_SQL} AS category FROM entries e WHERE e.scan_id=?1 AND e.kind='file') SELECT id,parent_id,name,path,kind,logical_size,logical_size FROM classified WHERE id>?2 AND category=?3 ORDER BY id LIMIT 101");
+        let mut rows = self
+            .connection
+            .prepare(&query)
+            .map_err(storage_error)?
+            .query_map(params![scan_id, after, category_key(category)], read_entry)
+            .map_err(storage_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(storage_error)?;
+        let next_cursor = if rows.len() > 100 {
+            rows.pop();
+            rows.last().map(|entry| entry.id.clone())
+        } else {
+            None
+        };
+        Ok(EntryPage {
+            items: rows,
+            next_cursor,
+        })
+    }
 
     pub fn old_files(
         &self,

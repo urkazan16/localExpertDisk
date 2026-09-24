@@ -205,6 +205,18 @@ impl ScanService {
     pub fn categories(&self, scan_id: &str) -> Result<Vec<CategorySummary>, AppError> {
         guard(&self.shared.storage)?.categories(parse_id(scan_id)?)
     }
+    pub fn files_in_category(
+        &self,
+        scan_id: &str,
+        category: domain::FileCategory,
+        after: Option<&str>,
+    ) -> Result<EntryPage, AppError> {
+        guard(&self.shared.storage)?.files_in_category(
+            parse_id(scan_id)?,
+            category,
+            after.map(parse_id).transpose()?.unwrap_or(0),
+        )
+    }
     pub fn old_files(
         &self,
         scan_id: &str,
