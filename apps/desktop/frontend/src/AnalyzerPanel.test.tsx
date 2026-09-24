@@ -5,6 +5,7 @@ import {
   getChildren,
   getLargeFiles,
   getScanRoot,
+  moveEntryToTrash,
   openEntry,
   revealEntry,
   searchEntries,
@@ -15,6 +16,7 @@ vi.mock("./api/generated", () => ({
   getChildren: vi.fn(),
   getLargeFiles: vi.fn(),
   getScanRoot: vi.fn(),
+  moveEntryToTrash: vi.fn(),
   searchEntries: vi.fn(),
   openEntry: vi.fn(),
   revealEntry: vi.fn(),
@@ -118,5 +120,16 @@ describe("Analyzer UI", () => {
     await waitFor(() => expect(openEntry).toHaveBeenCalledWith("7", "9"));
     fireEvent.click(screen.getByRole("button", { name: "Показать в системе" }));
     await waitFor(() => expect(revealEntry).toHaveBeenCalledWith("7", "9"));
+  });
+
+  it("offers trash only when the platform advertises it and refreshes the folder", async () => {
+    vi.mocked(moveEntryToTrash).mockResolvedValue();
+    render(<AnalyzerPanel enabled scan={scan} trash />);
+    await screen.findByText("nested");
+    fireEvent.click(screen.getByRole("button", { name: "В корзину" }));
+    await waitFor(() =>
+      expect(moveEntryToTrash).toHaveBeenCalledWith("7", "9"),
+    );
+    expect(getChildren).toHaveBeenCalledTimes(2);
   });
 });

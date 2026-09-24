@@ -130,7 +130,11 @@ export function App() {
           </div>
         </section>
         <ScanPanel enabled={state.status === "ready"} onScanChange={setScan} />
-        <AnalyzerPanel enabled={state.status === "ready"} scan={scan} />
+        <AnalyzerPanel
+          enabled={state.status === "ready"}
+          scan={scan}
+          trash={state.status === "ready" && state.info.capabilities.trash}
+        />
         <OldFilesPanel enabled={state.status === "ready"} scan={scan} />
         <HistoryDuplicatesPanel enabled={state.status === "ready"} />
       </main>

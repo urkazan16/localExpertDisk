@@ -1,5 +1,8 @@
 use super::*;
-use filesystem::native::{DirectoryEntries, EntryMetadata};
+use filesystem::{
+    native::{DirectoryEntries, EntryMetadata},
+    operations::TrashProvider,
+};
 use rusqlite::Connection;
 use std::{fs, io, sync::mpsc};
 
@@ -197,6 +200,16 @@ fn explorer_waits_for_a_terminal_scan() {
 struct RecordingLauncher {
     calls: Mutex<Vec<(PathBuf, bool)>>,
 }
+
+struct RecordingTrash {
+    paths: Mutex<Vec<PathBuf>>,
+}
+impl TrashProvider for RecordingTrash {
+    fn move_to_trash(&self, path: &Path) -> Result<(), AppError> {
+        self.paths.lock().unwrap().push(path.to_owned());
+        Ok(())
+    }
+}
 impl EntryLauncher for RecordingLauncher {
     fn launch(&self, path: &Path, reveal: bool) -> Result<(), AppError> {
         self.calls.lock().unwrap().push((path.to_owned(), reveal));
@@ -239,6 +252,110 @@ fn system_actions_use_only_indexed_existing_entries() {
             .code,
         ErrorCode::InvalidTarget
     );
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn trash_rechecks_metadata_and_reconciles_the_index() {
+    let f = Fixture::new();
+    fs::create_dir(f.root.join("folder")).unwrap();
+    fs::write(f.root.join("folder/child"), [0; 5]).unwrap();
+    fs::write(f.root.join("keep"), [0; 2]).unwrap();
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    let session = service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    assert_eq!(wait_terminal(&rx).state, ScanState::Completed);
+    let root = service.root(&session.id).unwrap();
+    let folder = service
+        .children(&session.id, &root.id, None)
+        .unwrap()
+        .items
+        .into_iter()
+        .find(|entry| entry.name == "folder")
+        .unwrap();
+    let trash = RecordingTrash {
+        paths: Mutex::new(vec![]),
+    };
+    service
+        .move_to_trash_with(&session.id, &folder.id, &trash, &NativeFileSystem)
+        .unwrap();
+    assert_eq!(
+        trash.paths.lock().unwrap().as_slice(),
+        &[f.root.join("folder").canonicalize().unwrap()]
+    );
+    let remaining = service.children(&session.id, &root.id, None).unwrap();
+    assert_eq!(remaining.items.len(), 1);
+    assert_eq!(remaining.items[0].name, "keep");
+    assert_eq!(
+        service
+            .get_scan(Some(&session.id))
+            .unwrap()
+            .unwrap()
+            .logical_size,
+        "2"
+    );
+    assert_eq!(
+        service
+            .get_scan(Some(&session.id))
+            .unwrap()
+            .unwrap()
+            .directories_count,
+        "1"
+    );
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn trash_refuses_changed_and_protected_entries() {
+    let f = Fixture::new();
+    let file = f.root.join("changed");
+    fs::write(&file, [0; 2]).unwrap();
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    let session = service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    wait_terminal(&rx);
+    let root = service.root(&session.id).unwrap();
+    let entry = service
+        .children(&session.id, &root.id, None)
+        .unwrap()
+        .items
+        .remove(0);
+    fs::write(&file, [0; 3]).unwrap();
+    let trash = RecordingTrash {
+        paths: Mutex::new(vec![]),
+    };
+    assert_eq!(
+        service
+            .move_to_trash_with(&session.id, &entry.id, &trash, &NativeFileSystem)
+            .unwrap_err()
+            .code,
+        ErrorCode::EntryChanged
+    );
+    assert_eq!(
+        ProtectedPathPolicy::allows(
+            &f.root,
+            &f.root,
+            &f.db.parent().unwrap().canonicalize().unwrap()
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::ProtectedPath
+    );
+    assert_eq!(
+        ProtectedPathPolicy::allows(
+            Path::new("/"),
+            Path::new("/System/test"),
+            Path::new("/state")
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::ProtectedPath
+    );
+    assert!(trash.paths.lock().unwrap().is_empty());
     service.shutdown().unwrap();
 }
 

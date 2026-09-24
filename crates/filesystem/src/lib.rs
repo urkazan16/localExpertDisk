@@ -19,10 +19,13 @@ impl PlatformProvider for LocalPlatform {
     }
 
     fn capabilities(&self) -> Capabilities {
-        // Providers are introduced with their implementation in later stages.
-        Capabilities::default()
+        Capabilities {
+            trash: cfg!(target_os = "macos"),
+            ..Default::default()
+        }
     }
 }
 
 pub mod native;
+pub mod operations;
 pub mod volumes;

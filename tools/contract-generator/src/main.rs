@@ -83,6 +83,9 @@ export function openEntry(scanId: string, entryId: string): Promise<void> {
 export function revealEntry(scanId: string, entryId: string): Promise<void> {
   return invoke<void>('reveal_entry', { scanId, entryId });
 }
+export function moveEntryToTrash(scanId: string, entryId: string): Promise<void> {
+  return invoke<void>('move_entry_to_trash', { scanId, entryId });
+}
 export function getScanHistory(afterId: string | null = null): Promise<ScanHistoryPage> {
   return invoke<ScanHistoryPage>('get_scan_history', { afterId });
 }

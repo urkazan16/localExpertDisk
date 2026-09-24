@@ -161,6 +161,17 @@ async fn reveal_entry(
         .map_err(|_| internal())?
 }
 #[tauri::command]
+async fn move_entry_to_trash(
+    state: tauri::State<'_, AppState>,
+    scan_id: String,
+    entry_id: String,
+) -> Result<(), AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.move_to_trash(&scan_id, &entry_id))
+        .await
+        .map_err(|_| internal())?
+}
+#[tauri::command]
 async fn get_scan_history(
     state: tauri::State<'_, AppState>,
     after_id: Option<String>,
@@ -217,6 +228,7 @@ fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         search_entries,
         open_entry,
         reveal_entry,
+        move_entry_to_trash,
         get_scan_history,
         compare_scans,
         get_duplicate_candidates
@@ -287,7 +299,13 @@ mod tests {
         let response = invoke(AppState(Ok(storage))).unwrap();
         assert_eq!(response.schema_version, 4);
         assert_eq!(response.version, env!("CARGO_PKG_VERSION"));
-        assert_eq!(response.capabilities, Default::default());
+        assert_eq!(
+            response.capabilities,
+            domain::Capabilities {
+                trash: cfg!(target_os = "macos"),
+                ..Default::default()
+            }
+        );
     }
 
     #[test]

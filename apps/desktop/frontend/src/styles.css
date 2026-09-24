@@ -299,6 +299,9 @@ progress {
 .entry-list button {
   padding: 6px 10px;
 }
+.danger {
+  color: #8c3832;
+}
 .entry-actions {
   display: flex;
   gap: 6px;

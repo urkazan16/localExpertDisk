@@ -6,6 +6,7 @@ use domain::{
 };
 use filesystem::{
     native::{EntryKind, FileSystemProvider, NativeFileSystem},
+    operations::{NativeTrash, TrashProvider},
     LocalPlatform,
 };
 use scanner::{DirectoryTask, EntryDraft, ScanSink};
@@ -199,6 +200,36 @@ impl ScanService {
     pub fn reveal_entry(&self, scan_id: &str, entry_id: &str) -> Result<(), AppError> {
         self.launch_entry_with(scan_id, entry_id, true, &NativeEntryLauncher)
     }
+    pub fn move_to_trash(&self, scan_id: &str, entry_id: &str) -> Result<(), AppError> {
+        self.move_to_trash_with(scan_id, entry_id, &NativeTrash, &NativeFileSystem)
+    }
+    fn move_to_trash_with(
+        &self,
+        scan_id: &str,
+        entry_id: &str,
+        trash: &impl TrashProvider,
+        fs: &impl FileSystemProvider,
+    ) -> Result<(), AppError> {
+        let scan_id = parse_id(scan_id)?;
+        let entry_id = parse_id(entry_id)?;
+        let target = guard(&self.shared.storage)?.operation_target(scan_id, entry_id)?;
+        ProtectedPathPolicy::allows(&target.root_path, &target.path, &self.shared.excluded)?;
+        if !matches!(target.kind, EntryKind::File | EntryKind::Directory) {
+            return Err(AppError::new(ErrorCode::InvalidTarget));
+        }
+        let current = fs
+            .metadata(&target.path)
+            .map_err(|_| AppError::new(ErrorCode::EntryChanged))?;
+        if current.kind != target.kind
+            || current.logical_size != target.logical_size
+            || target.identity.is_some() && current.identity != target.identity
+            || target.modified_at_ms.is_some() && current.modified_at_ms != target.modified_at_ms
+        {
+            return Err(AppError::new(ErrorCode::EntryChanged));
+        }
+        trash.move_to_trash(&target.path)?;
+        guard(&self.shared.storage)?.reconcile_removed_entry(scan_id, entry_id)
+    }
     fn launch_entry_with(
         &self,
         scan_id: &str,
@@ -314,6 +345,21 @@ impl ScanService {
         if let Some(active) = active {
             active.cancel.store(true, Ordering::Release);
             active.handle.join().map_err(|_| internal())?;
+        }
+        Ok(())
+    }
+}
+
+struct ProtectedPathPolicy;
+impl ProtectedPathPolicy {
+    fn allows(root: &Path, path: &Path, excluded: &Path) -> Result<(), AppError> {
+        let protected = ["/System", "/bin", "/sbin", "/usr"];
+        if path == root
+            || !path.starts_with(root)
+            || path.starts_with(excluded)
+            || protected.iter().any(|prefix| path.starts_with(prefix))
+        {
+            return Err(AppError::new(ErrorCode::ProtectedPath));
         }
         Ok(())
     }

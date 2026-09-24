@@ -18,6 +18,9 @@ pub enum ErrorCode {
     LaunchFailed,
     PermissionDenied,
     IncompatibleScans,
+    ProtectedPath,
+    EntryChanged,
+    TrashUnavailable,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -101,6 +104,9 @@ impl AppError {
             ErrorCode::LaunchFailed => "launch_failed",
             ErrorCode::PermissionDenied => "permission_denied",
             ErrorCode::IncompatibleScans => "incompatible_scans",
+            ErrorCode::ProtectedPath => "protected_path",
+            ErrorCode::EntryChanged => "entry_changed",
+            ErrorCode::TrashUnavailable => "trash_unavailable",
         };
         Self {
             code,

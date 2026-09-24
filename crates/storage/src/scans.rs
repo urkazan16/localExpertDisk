@@ -36,6 +36,15 @@ pub fn parse_id(id: &str) -> Result<i64, AppError> {
         .filter(|value| *value > 0 && value.to_string() == id)
         .ok_or_else(|| AppError::new(ErrorCode::ScanNotFound))
 }
+#[derive(Debug, Clone)]
+pub struct OperationTarget {
+    pub root_path: std::path::PathBuf,
+    pub path: std::path::PathBuf,
+    pub kind: EntryKind,
+    pub logical_size: u64,
+    pub identity: Option<String>,
+    pub modified_at_ms: Option<i64>,
+}
 fn integer(value: u64) -> Result<i64, AppError> {
     i64::try_from(value).map_err(|_| AppError::new(ErrorCode::SizeOverflow))
 }
@@ -552,6 +561,116 @@ impl SqliteStorage {
             .map_err(storage_error)?
             .ok_or_else(|| AppError::new(ErrorCode::ScanNotFound))?;
         decode_path(path).map_err(|_| AppError::new(ErrorCode::InvalidSchema))
+    }
+    pub fn operation_target(
+        &self,
+        scan_id: i64,
+        entry_id: i64,
+    ) -> Result<OperationTarget, AppError> {
+        self.ensure_queryable(scan_id)?;
+        let root: Vec<u8> = self
+            .connection
+            .query_row(
+                "SELECT path FROM entries WHERE scan_id=?1 AND parent_id IS NULL",
+                [scan_id],
+                |row| row.get(0),
+            )
+            .map_err(storage_error)?;
+        let (path, kind, logical_size, identity, modified_at_ms): (Vec<u8>, String, i64, Option<String>, Option<i64>) = self.connection.query_row(
+            "SELECT path,kind,logical_size,identity,modified_at_ms FROM entries WHERE scan_id=?1 AND id=?2 AND parent_id IS NOT NULL",
+            params![scan_id, entry_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        ).optional().map_err(storage_error)?.ok_or_else(|| AppError::new(ErrorCode::ScanNotFound))?;
+        let kind = match kind.as_str() {
+            "file" => EntryKind::File,
+            "directory" => EntryKind::Directory,
+            "symlink" => EntryKind::Symlink,
+            "other" => EntryKind::Other,
+            _ => return Err(internal()),
+        };
+        Ok(OperationTarget {
+            root_path: decode_path(root).map_err(|_| internal())?,
+            path: decode_path(path).map_err(|_| internal())?,
+            kind,
+            logical_size: u64::try_from(logical_size).map_err(|_| internal())?,
+            identity,
+            modified_at_ms,
+        })
+    }
+    pub fn reconcile_removed_entry(&mut self, scan_id: i64, entry_id: i64) -> Result<(), AppError> {
+        self.ensure_queryable(scan_id)?;
+        let tx = self.connection.transaction().map_err(storage_error)?;
+        let parent: i64 = tx
+            .query_row(
+                "SELECT parent_id FROM entries WHERE scan_id=?1 AND id=?2",
+                params![scan_id, entry_id],
+                |row| row.get(0),
+            )
+            .map_err(storage_error)?;
+        let mut statement = tx.prepare(
+            "WITH RECURSIVE subtree(id,depth) AS (
+                 SELECT ?2,0 UNION ALL SELECT e.id,s.depth+1 FROM entries e JOIN subtree s ON e.parent_id=s.id WHERE e.scan_id=?1
+             ) SELECT e.id,e.kind,e.logical_size,s.depth FROM entries e JOIN subtree s ON e.id=s.id",
+        ).map_err(storage_error)?;
+        let mut rows = statement
+            .query_map(params![scan_id, entry_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(storage_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(storage_error)?;
+        drop(statement);
+        if rows.is_empty() {
+            return Err(AppError::new(ErrorCode::ScanNotFound));
+        }
+        let files = rows.iter().filter(|(_, kind, _, _)| kind == "file").count() as i64;
+        let directories = rows
+            .iter()
+            .filter(|(_, kind, _, _)| kind == "directory")
+            .count() as i64;
+        let symlinks = rows
+            .iter()
+            .filter(|(_, kind, _, _)| kind == "symlink")
+            .count() as i64;
+        let logical = rows.iter().try_fold(0_i64, |total, (_, _, size, _)| {
+            total.checked_add(*size).ok_or_else(internal)
+        })?;
+        let ids: Vec<i64> = rows.iter().map(|(id, _, _, _)| *id).collect();
+        for id in &ids {
+            tx.execute("DELETE FROM directory_queue WHERE entry_id=?1", [id])
+                .map_err(storage_error)?;
+            tx.execute("DELETE FROM directory_aggregates WHERE entry_id=?1", [id])
+                .map_err(storage_error)?;
+        }
+        let mut ancestor = Some(parent);
+        while let Some(id) = ancestor {
+            tx.execute(
+                "UPDATE directory_aggregates SET files_count=files_count-?2,directories_count=directories_count-?3,logical_size=logical_size-?4 WHERE entry_id=?1",
+                params![id, files, directories, logical],
+            ).map_err(storage_error)?;
+            ancestor = tx
+                .query_row("SELECT parent_id FROM entries WHERE id=?1", [id], |row| {
+                    row.get::<_, Option<i64>>(0)
+                })
+                .optional()
+                .map_err(storage_error)?
+                .flatten();
+        }
+        rows.sort_by_key(|(_, _, _, depth)| std::cmp::Reverse(*depth));
+        for (id, _, _, _) in rows {
+            tx.execute("DELETE FROM entries WHERE id=?1", [id])
+                .map_err(storage_error)?;
+        }
+        tx.execute(
+            "UPDATE scan_sessions SET files_count=files_count-?2,directories_count=directories_count-?3,symlinks_count=symlinks_count-?4,logical_size=logical_size-?5 WHERE id=?1",
+            params![scan_id, files, directories, symlinks, logical],
+        ).map_err(storage_error)?;
+        tx.commit().map_err(storage_error)
     }
     pub fn duplicate_candidates(
         &self,

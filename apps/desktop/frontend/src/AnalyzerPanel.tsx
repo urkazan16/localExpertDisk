@@ -3,6 +3,7 @@ import {
   getChildren,
   getLargeFiles,
   getScanRoot,
+  moveEntryToTrash,
   openEntry,
   revealEntry,
   searchEntries,
@@ -25,10 +26,12 @@ function EntryRows({
   items,
   onDirectory,
   onAction,
+  onTrash,
 }: {
   items: IndexedEntry[];
   onDirectory?: (entry: IndexedEntry) => void;
   onAction?: (entry: IndexedEntry, action: "open" | "reveal") => void;
+  onTrash?: (entry: IndexedEntry) => void;
 }) {
   if (items.length === 0) return <p className="hint">Нет объектов.</p>;
   return (
@@ -63,6 +66,11 @@ function EntryRows({
               </button>
             </div>
           )}
+          {onTrash && entry.kind !== "symlink" && entry.kind !== "other" && (
+            <button className="secondary danger" onClick={() => onTrash(entry)}>
+              В корзину
+            </button>
+          )}
         </li>
       ))}
     </ul>
@@ -72,9 +80,11 @@ function EntryRows({
 export function AnalyzerPanel({
   enabled,
   scan,
+  trash = false,
 }: {
   enabled: boolean;
   scan: ScanSession | null;
+  trash?: boolean;
 }) {
   const [root, setRoot] = useState<IndexedEntry | null>(null);
   const [directory, setDirectory] = useState<IndexedEntry | null>(null);
@@ -175,6 +185,19 @@ export function AnalyzerPanel({
     }
   }
 
+  async function trashEntry(entry: IndexedEntry) {
+    if (!scan) return;
+    setError(null);
+    try {
+      await moveEntryToTrash(scan.id, entry.id);
+      if (directory) await showDirectory(directory);
+      setLargeFiles(null);
+      setSearch(null);
+    } catch (reason: unknown) {
+      setError(errorMessage(reason));
+    }
+  }
+
   if (!scan || !isTerminalCandidate(scan)) return null;
   return (
     <section className="panel analyzer" aria-labelledby="analysis-title">
@@ -217,6 +240,7 @@ export function AnalyzerPanel({
                 void showDirectory(entry);
               }}
               onAction={(entry, action) => void actOnEntry(entry, action)}
+              onTrash={trash ? (entry) => void trashEntry(entry) : undefined}
             />
             {children.next_cursor && (
               <button
@@ -244,6 +268,9 @@ export function AnalyzerPanel({
                 <EntryRows
                   items={largeFiles.items}
                   onAction={(entry, action) => void actOnEntry(entry, action)}
+                  onTrash={
+                    trash ? (entry) => void trashEntry(entry) : undefined
+                  }
                 />
                 {largeFiles.next_cursor && (
                   <button
@@ -279,6 +306,7 @@ export function AnalyzerPanel({
               <EntryRows
                 items={search.items}
                 onAction={(entry, action) => void actOnEntry(entry, action)}
+                onTrash={trash ? (entry) => void trashEntry(entry) : undefined}
               />
             )}
           </section>
