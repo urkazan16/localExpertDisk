@@ -126,6 +126,16 @@ pub struct VolumeInfo {
     pub available_bytes: String,
 }
 
+/// Read-only metadata provided by a filesystem-specific snapshot adapter.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct SnapshotInfo {
+    pub id: String,
+    pub name: String,
+    pub created_at_ms: String,
+    pub logical_size: Option<String>,
+    pub exclusive_size: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ScanState {
@@ -173,7 +183,7 @@ pub struct ScanSession {
     pub symlinks_count: String,
     pub skipped_count: String,
     pub logical_size: String,
-    /// Unknown until native allocated-size providers are implemented.
+    /// None when the current platform cannot report allocated filesystem blocks.
     pub allocated_size: Option<String>,
     pub errors_count: String,
     pub started_at_ms: String,
@@ -226,11 +236,25 @@ pub struct EntryPage {
     pub next_cursor: Option<String>,
 }
 
-/// A file selected from the local index by its last known modification time.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct BatchOperationResult {
+    pub moved_entry_ids: Vec<String>,
+    pub failed_entry_ids: Vec<String>,
+}
+
+/// A file selected from the local index by one available filesystem timestamp.
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct OldFile {
     pub entry: IndexedEntry,
-    pub modified_at_ms: String,
+    pub timestamp_ms: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OldFileCriterion {
+    Modified,
+    Created,
+    Accessed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

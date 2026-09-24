@@ -21,6 +21,8 @@ impl PlatformProvider for LocalPlatform {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             trash: cfg!(target_os = "macos"),
+            allocated_size: cfg!(unix),
+            duplicate_hashing: true,
             ..Default::default()
         }
     }
@@ -28,4 +30,6 @@ impl PlatformProvider for LocalPlatform {
 
 pub mod native;
 pub mod operations;
+pub mod snapshots;
 pub mod volumes;
+pub mod watcher;

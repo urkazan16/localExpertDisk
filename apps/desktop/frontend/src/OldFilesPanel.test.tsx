@@ -35,7 +35,7 @@ beforeEach(() => {
           logical_size: "20",
           aggregate_size: "20",
         },
-        modified_at_ms: "1704067200000",
+        timestamp_ms: "1704067200000",
       },
     ],
     next_cursor: null,
@@ -43,13 +43,19 @@ beforeEach(() => {
 });
 
 describe("Old files UI", () => {
-  it("states the modification-time criterion and queries only on request", async () => {
+  it("states the selected criterion and queries only on request", async () => {
     render(<OldFilesPanel enabled scan={scan} />);
     expect(screen.getByText(/Критерий: файл не изменялся/)).toBeInTheDocument();
     expect(getOldFiles).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Показать файлы" }));
     await waitFor(() =>
-      expect(getOldFiles).toHaveBeenCalledWith("7", expect.any(String), null),
+      expect(getOldFiles).toHaveBeenCalledWith(
+        "7",
+        "modified",
+        expect.any(String),
+        null,
+        null,
+      ),
     );
     expect(await screen.findByText("archive.zip")).toBeInTheDocument();
     expect(screen.getByText(/Не изменялся с/)).toBeInTheDocument();
@@ -72,11 +78,55 @@ describe("Old files UI", () => {
     await screen.findByRole("button", { name: "Следующая страница" });
     fireEvent.click(screen.getByRole("button", { name: "Следующая страница" }));
     await waitFor(() => expect(getOldFiles).toHaveBeenCalledTimes(2));
-    const firstCutoff = vi.mocked(getOldFiles).mock.calls[0][1];
+    const firstCutoff = vi.mocked(getOldFiles).mock.calls[0][2];
     expect(vi.mocked(getOldFiles).mock.calls[1]).toEqual([
       "7",
+      "modified",
       firstCutoff,
+      null,
       "1700000000000:8",
     ]);
+  });
+
+  it("uses the selected timestamp criterion and a custom date", async () => {
+    render(<OldFilesPanel enabled scan={scan} />);
+    fireEvent.change(screen.getByLabelText("Критерий времени"), {
+      target: { value: "created" },
+    });
+    fireEvent.change(screen.getByLabelText("Период"), {
+      target: { value: "custom" },
+    });
+    const button = screen.getByRole("button", { name: "Показать файлы" });
+    expect(button).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Дата"), {
+      target: { value: "2024-01-01" },
+    });
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(getOldFiles).toHaveBeenCalledWith(
+        "7",
+        "created",
+        "1704067200000",
+        null,
+        null,
+      ),
+    );
+  });
+
+  it("passes the minimum size to the indexed query", async () => {
+    render(<OldFilesPanel enabled scan={scan} />);
+    fireEvent.change(screen.getByLabelText("Минимальный размер, МиБ"), {
+      target: { value: "4" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Показать файлы" }));
+    await waitFor(() =>
+      expect(getOldFiles).toHaveBeenCalledWith(
+        "7",
+        "modified",
+        expect.any(String),
+        "4194304",
+        null,
+      ),
+    );
   });
 });

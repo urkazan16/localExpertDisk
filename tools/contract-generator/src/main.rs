@@ -1,8 +1,8 @@
 use domain::{
-    AppError, AppInfo, Capabilities, DuplicateGroup, DuplicateGroupPage, EntryPage, ErrorCode,
-    IndexedEntry, IndexedEntryKind, OldFile, OldFilePage, Platform, ScanComparison,
-    ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState, StartScanRequest,
-    VolumeInfo,
+    AppError, AppInfo, BatchOperationResult, Capabilities, DuplicateGroup, DuplicateGroupPage,
+    EntryPage, ErrorCode, IndexedEntry, IndexedEntryKind, OldFile, OldFileCriterion, OldFilePage,
+    Platform, ScanComparison, ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState,
+    SnapshotInfo, StartScanRequest, VolumeInfo,
 };
 use std::{error::Error, path::PathBuf};
 use ts_rs::TS;
@@ -20,6 +20,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Capabilities::decl(&config),
         AppInfo::decl(&config),
         VolumeInfo::decl(&config),
+        SnapshotInfo::decl(&config),
         ScanState::decl(&config),
         ScanSession::decl(&config),
         StartScanRequest::decl(&config),
@@ -28,7 +29,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         IndexedEntryKind::decl(&config),
         IndexedEntry::decl(&config),
         EntryPage::decl(&config),
+        BatchOperationResult::decl(&config),
         OldFile::decl(&config),
+        OldFileCriterion::decl(&config),
         OldFilePage::decl(&config),
         ScanHistoryPage::decl(&config),
         ScanComparison::decl(&config),
@@ -71,8 +74,8 @@ export function getChildren(scanId: string, directoryId: string, afterId: string
 export function getLargeFiles(scanId: string, afterId: string | null = null): Promise<EntryPage> {
   return invoke<EntryPage>('get_large_files', { scanId, afterId });
 }
-export function getOldFiles(scanId: string, olderThanMs: string, afterId: string | null = null): Promise<OldFilePage> {
-  return invoke<OldFilePage>('get_old_files', { scanId, olderThanMs, afterId });
+export function getOldFiles(scanId: string, criterion: OldFileCriterion, olderThanMs: string, minSize: string | null = null, afterId: string | null = null): Promise<OldFilePage> {
+  return invoke<OldFilePage>('get_old_files', { scanId, criterion, olderThanMs, minSize, afterId });
 }
 export function searchEntries(scanId: string, text: string, afterId: string | null = null): Promise<EntryPage> {
   return invoke<EntryPage>('search_entries', { scanId, text, afterId });
@@ -86,6 +89,9 @@ export function revealEntry(scanId: string, entryId: string): Promise<void> {
 export function moveEntryToTrash(scanId: string, entryId: string): Promise<void> {
   return invoke<void>('move_entry_to_trash', { scanId, entryId });
 }
+export function moveEntriesToTrash(scanId: string, entryIds: string[]): Promise<BatchOperationResult> {
+  return invoke<BatchOperationResult>('move_entries_to_trash', { scanId, entryIds });
+}
 export function getScanHistory(afterId: string | null = null): Promise<ScanHistoryPage> {
   return invoke<ScanHistoryPage>('get_scan_history', { afterId });
 }
@@ -97,6 +103,9 @@ export function deleteScanHistory(scanId: string): Promise<void> {
 }
 export function getDuplicateCandidates(afterSize: string | null = null): Promise<DuplicateGroupPage> {
   return invoke<DuplicateGroupPage>('get_duplicate_candidates', { afterSize });
+}
+export function confirmDuplicates(): Promise<DuplicateGroupPage> {
+  return invoke<DuplicateGroupPage>('confirm_duplicates');
 }
 "#);
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

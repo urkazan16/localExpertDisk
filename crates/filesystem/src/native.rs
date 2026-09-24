@@ -25,7 +25,10 @@ impl EntryKind {
 pub struct EntryMetadata {
     pub kind: EntryKind,
     pub logical_size: u64,
+    pub allocated_size: Option<u64>,
+    pub created_at_ms: Option<i64>,
     pub modified_at_ms: Option<i64>,
+    pub accessed_at_ms: Option<i64>,
     pub identity: Option<String>,
 }
 pub type DirectoryEntries = Box<dyn Iterator<Item = io::Result<PathBuf>> + Send>;
@@ -59,6 +62,13 @@ impl FileSystemProvider for NativeFileSystem {
         };
         #[cfg(not(unix))]
         let identity = None;
+        #[cfg(unix)]
+        let allocated_size = {
+            use std::os::unix::fs::MetadataExt;
+            (kind == EntryKind::File).then(|| metadata.blocks().saturating_mul(512))
+        };
+        #[cfg(not(unix))]
+        let allocated_size = None;
         Ok(EntryMetadata {
             kind,
             logical_size: if kind == EntryKind::File {
@@ -66,11 +76,10 @@ impl FileSystemProvider for NativeFileSystem {
             } else {
                 0
             },
-            modified_at_ms: metadata
-                .modified()
-                .ok()
-                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                .and_then(|duration| i64::try_from(duration.as_millis()).ok()),
+            allocated_size,
+            created_at_ms: metadata.created().ok().and_then(timestamp_ms),
+            modified_at_ms: metadata.modified().ok().and_then(timestamp_ms),
+            accessed_at_ms: metadata.accessed().ok().and_then(timestamp_ms),
             identity,
         })
     }
@@ -79,6 +88,11 @@ impl FileSystemProvider for NativeFileSystem {
             fs::read_dir(path)?.map(|entry| entry.map(|entry| entry.path())),
         ))
     }
+}
+fn timestamp_ms(time: std::time::SystemTime) -> Option<i64> {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
 }
 
 #[cfg(unix)]

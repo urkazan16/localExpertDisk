@@ -96,6 +96,23 @@ describe("Scanner UI", () => {
       expect.any(Function),
     );
   });
+
+  it("shows allocated size only when the native scan provides it", async () => {
+    vi.mocked(getScan).mockResolvedValue({
+      ...initial,
+      state: "completed",
+      allocated_size: "4096",
+    });
+    render(<ScanPanel enabled />);
+    expect(
+      await screen.findByText("Физический размер на диске"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Физический размер подсчитан по блокам файловой системы/,
+      ),
+    ).toBeInTheDocument();
+  });
   it("shows indeterminate progress and cancellation waits for terminal confirmation", async () => {
     let publish!: (scan: ScanSession) => void;
     vi.mocked(startScan).mockImplementation(async (_request, onProgress) => {

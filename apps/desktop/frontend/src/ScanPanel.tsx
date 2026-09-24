@@ -360,6 +360,14 @@ export function ScanPanel({
                 {formatBytes(scan.logical_size)}
               </dd>
             </div>
+            {scan.allocated_size !== null && (
+              <div>
+                <dt>Физический размер на диске</dt>
+                <dd title={`${formatCount(scan.allocated_size)} байт`}>
+                  {formatBytes(scan.allocated_size)}
+                </dd>
+              </div>
+            )}
             <div>
               <dt>Ссылки</dt>
               <dd>{formatCount(scan.symlinks_count)}</dd>
@@ -374,8 +382,10 @@ export function ScanPanel({
             </div>
           </dl>
           <p className="hint">
-            Физический размер на диске пока недоступен. Жёсткие ссылки считаются
-            по каждому пути.
+            {scan.allocated_size === null
+              ? "Физический размер на диске недоступен на этой платформе."
+              : "Физический размер подсчитан по блокам файловой системы."}{" "}
+            Жёсткие ссылки считаются по каждому пути.
           </p>
           {isTerminal(scan) && BigInt(scan.errors_count) > 0n && (
             <button

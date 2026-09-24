@@ -21,11 +21,31 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "history_comparison",
         include_str!("../migrations/0005_history_comparison.sql"),
     ),
+    (
+        "duplicate_hashes",
+        include_str!("../migrations/0006_duplicate_hashes.sql"),
+    ),
+    (
+        "entry_lifecycle_timestamps",
+        include_str!("../migrations/0007_entry_lifecycle_timestamps.sql"),
+    ),
+    (
+        "allocated_size",
+        include_str!("../migrations/0008_allocated_size.sql"),
+    ),
+    (
+        "entry_allocated_size",
+        include_str!("../migrations/0009_entry_allocated_size.sql"),
+    ),
 ];
 
 pub trait StorageStatus {
     fn schema_version(&self) -> Result<u32, AppError>;
 }
+
+/// Foundation boundary for services that persist scan state.
+/// Concrete scan queries remain on `SqliteStorage` until a second store exists.
+pub trait ScanStore: StorageStatus {}
 
 pub struct SqliteStorage {
     connection: Connection,
@@ -128,6 +148,8 @@ impl StorageStatus for SqliteStorage {
     }
 }
 
+impl ScanStore for SqliteStorage {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,7 +159,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.db");
         let db = SqliteStorage::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 5);
+        assert_eq!(db.schema_version().unwrap(), 9);
         db.connection
             .execute_batch(
                 "CREATE TABLE marker(value TEXT); INSERT INTO marker VALUES ('preserved');",
@@ -145,7 +167,7 @@ mod tests {
             .unwrap();
         drop(db);
         let db = SqliteStorage::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 5);
+        assert_eq!(db.schema_version().unwrap(), 9);
         let marker: String = db
             .connection
             .query_row("SELECT value FROM marker", [], |row| row.get(0))
@@ -180,14 +202,14 @@ mod tests {
         let version: u32 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 9);
         assert!(connection.prepare("SELECT * FROM partial").is_err());
         let count: u32 = connection
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 5);
+        assert_eq!(count, 9);
     }
 
     #[test]

@@ -2962,6 +2962,7 @@ dependencies = [
  "filesystem",
  "rusqlite",
  "scanner",
+ "sha2",
  "storage",
  "tempfile",
  "tracing",

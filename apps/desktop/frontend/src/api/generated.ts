@@ -11,6 +11,7 @@ export type VolumeInfo = { name: string,
  * None means the native mount point cannot be represented in the path input.
  */
 mount_point: string | null, filesystem: string, total_bytes: string, available_bytes: string, };
+export type SnapshotInfo = { id: string, name: string, created_at_ms: string, logical_size: string | null, exclusive_size: string | null, };
 export type ScanState = "created" | "preparing" | "scanning" | "finalizing" | "completed" | "partial" | "cancelling" | "cancelled" | "failed" | "interrupted";
 export type ScanSession = { id: string, root_path: string, state: ScanState, files_count: string,
 /**
@@ -18,7 +19,7 @@ export type ScanSession = { id: string, root_path: string, state: ScanState, fil
  */
 directories_count: string, symlinks_count: string, skipped_count: string, logical_size: string,
 /**
- * Unknown until native allocated-size providers are implemented.
+ * None when the current platform cannot report allocated filesystem blocks.
  */
 allocated_size: string | null, errors_count: string, started_at_ms: string, finished_at_ms: string | null, failure: AppError | null, };
 export type StartScanRequest = { root_path: string, };
@@ -31,10 +32,12 @@ export type IndexedEntry = { id: string, parent_id: string | null, name: string,
  */
 aggregate_size: string, };
 export type EntryPage = { items: Array<IndexedEntry>, next_cursor: string | null, };
-export type OldFile = { entry: IndexedEntry, modified_at_ms: string, };
+export type BatchOperationResult = { moved_entry_ids: Array<string>, failed_entry_ids: Array<string>, };
+export type OldFile = { entry: IndexedEntry, timestamp_ms: string, };
+export type OldFileCriterion = "modified" | "created" | "accessed";
 export type OldFilePage = { items: Array<OldFile>, next_cursor: string | null, };
 export type ScanHistoryPage = { items: Array<ScanSession>, next_cursor: string | null, };
-export type ScanComparison = { newer_scan_id: string, older_scan_id: string, files_delta: string, directories_delta: string, logical_size_delta: string, };
+export type ScanComparison = { newer_scan_id: string, older_scan_id: string, files_delta: string, directories_delta: string, logical_size_delta: string, added_files_count: string, removed_files_count: string, modified_files_count: string, moved_files_count: string, };
 export type DuplicateGroup = { size: string, files_count: string, reclaimable_size: string, };
 export type DuplicateGroupPage = { items: Array<DuplicateGroup>, next_cursor: string | null, };
 
@@ -68,8 +71,8 @@ export function getChildren(scanId: string, directoryId: string, afterId: string
 export function getLargeFiles(scanId: string, afterId: string | null = null): Promise<EntryPage> {
   return invoke<EntryPage>('get_large_files', { scanId, afterId });
 }
-export function getOldFiles(scanId: string, olderThanMs: string, afterId: string | null = null): Promise<OldFilePage> {
-  return invoke<OldFilePage>('get_old_files', { scanId, olderThanMs, afterId });
+export function getOldFiles(scanId: string, criterion: OldFileCriterion, olderThanMs: string, minSize: string | null = null, afterId: string | null = null): Promise<OldFilePage> {
+  return invoke<OldFilePage>('get_old_files', { scanId, criterion, olderThanMs, minSize, afterId });
 }
 export function searchEntries(scanId: string, text: string, afterId: string | null = null): Promise<EntryPage> {
   return invoke<EntryPage>('search_entries', { scanId, text, afterId });
@@ -83,12 +86,21 @@ export function revealEntry(scanId: string, entryId: string): Promise<void> {
 export function moveEntryToTrash(scanId: string, entryId: string): Promise<void> {
   return invoke<void>('move_entry_to_trash', { scanId, entryId });
 }
+export function moveEntriesToTrash(scanId: string, entryIds: string[]): Promise<BatchOperationResult> {
+  return invoke<BatchOperationResult>('move_entries_to_trash', { scanId, entryIds });
+}
 export function getScanHistory(afterId: string | null = null): Promise<ScanHistoryPage> {
   return invoke<ScanHistoryPage>('get_scan_history', { afterId });
 }
 export function compareScans(newerScanId: string, olderScanId: string): Promise<ScanComparison> {
   return invoke<ScanComparison>('compare_scans', { newerScanId, olderScanId });
 }
+export function deleteScanHistory(scanId: string): Promise<void> {
+  return invoke<void>('delete_scan_history', { scanId });
+}
 export function getDuplicateCandidates(afterSize: string | null = null): Promise<DuplicateGroupPage> {
   return invoke<DuplicateGroupPage>('get_duplicate_candidates', { afterSize });
+}
+export function confirmDuplicates(): Promise<DuplicateGroupPage> {
+  return invoke<DuplicateGroupPage>('confirm_duplicates');
 }

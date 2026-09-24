@@ -267,6 +267,12 @@ progress {
 .analysis-block h3 {
   margin-bottom: 8px;
 }
+.history-row {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
 .entry-list {
   list-style: none;
   margin: 14px 0;

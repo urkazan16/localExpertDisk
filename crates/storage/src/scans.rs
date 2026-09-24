@@ -2,8 +2,8 @@ use crate::{storage_error, SqliteStorage};
 use analyzer::Totals;
 use domain::{
     AppError, DuplicateGroup, DuplicateGroupPage, EntryPage, ErrorCode, IndexedEntry,
-    IndexedEntryKind, OldFile, OldFilePage, ScanComparison, ScanHistoryPage, ScanIssue,
-    ScanIssuePage, ScanSession, ScanState,
+    IndexedEntryKind, OldFile, OldFileCriterion, OldFilePage, ScanComparison, ScanHistoryPage,
+    ScanIssue, ScanIssuePage, ScanSession, ScanState,
 };
 use filesystem::native::{decode_path, encode_path, EntryKind, EntryMetadata};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -45,6 +45,14 @@ pub struct OperationTarget {
     pub identity: Option<String>,
     pub modified_at_ms: Option<i64>,
 }
+#[derive(Debug, Clone)]
+pub struct HashCandidate {
+    pub id: i64,
+    pub path: std::path::PathBuf,
+    pub size: u64,
+    pub identity: Option<String>,
+    pub modified_at_ms: Option<i64>,
+}
 fn integer(value: u64) -> Result<i64, AppError> {
     i64::try_from(value).map_err(|_| AppError::new(ErrorCode::SizeOverflow))
 }
@@ -53,12 +61,12 @@ fn read_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanSession> {
     let state = serde_json::from_value(serde_json::Value::String(state)).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(e))
     })?;
-    let failure: Option<String> = row.get(11)?;
+    let failure: Option<String> = row.get(12)?;
     let failure = failure
         .map(|text| serde_json::from_str(&text))
         .transpose()
         .map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(11, rusqlite::types::Type::Text, Box::new(e))
+            rusqlite::Error::FromSqlConversionFailure(12, rusqlite::types::Type::Text, Box::new(e))
         })?;
     Ok(ScanSession {
         id: row.get::<_, i64>(0)?.to_string(),
@@ -69,10 +77,10 @@ fn read_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanSession> {
         symlinks_count: row.get::<_, i64>(5)?.to_string(),
         skipped_count: row.get::<_, i64>(6)?.to_string(),
         logical_size: row.get::<_, i64>(7)?.to_string(),
-        errors_count: row.get::<_, i64>(8)?.to_string(),
-        allocated_size: None,
-        started_at_ms: row.get::<_, i64>(9)?.to_string(),
-        finished_at_ms: row.get::<_, Option<i64>>(10)?.map(|n| n.to_string()),
+        allocated_size: row.get::<_, Option<i64>>(8)?.map(|value| value.to_string()),
+        errors_count: row.get::<_, i64>(9)?.to_string(),
+        started_at_ms: row.get::<_, i64>(10)?.to_string(),
+        finished_at_ms: row.get::<_, Option<i64>>(11)?.map(|n| n.to_string()),
         failure,
     })
 }
@@ -124,13 +132,27 @@ fn parse_old_files_cursor(cursor: Option<&str>) -> Result<(i64, i64), AppError> 
         .zip(id)
         .ok_or_else(|| AppError::new(ErrorCode::ScanNotFound))
 }
-const SELECT_SESSION: &str = "SELECT id,root_display,state,files_count,directories_count,symlinks_count,skipped_count,logical_size,errors_count,started_at_ms,finished_at_ms,failure FROM scan_sessions";
+const SELECT_SESSION: &str = "SELECT id,root_display,state,files_count,directories_count,symlinks_count,skipped_count,logical_size,allocated_size,errors_count,started_at_ms,finished_at_ms,failure FROM scan_sessions";
 
 fn aggregate(connection: &Connection, id: i64) -> Result<Totals, AppError> {
-    connection.query_row("SELECT files_count,directories_count,logical_size FROM directory_aggregates WHERE entry_id=?1", [id], |row| Ok(Totals { files: row.get(0)?, directories: row.get(1)?, logical: row.get(2)?, ..Default::default() })).map_err(storage_error)
+    connection
+        .query_row(
+            "SELECT files_count,directories_count,logical_size,allocated_size FROM directory_aggregates WHERE entry_id=?1",
+            [id],
+            |row| {
+                Ok(Totals {
+                    files: row.get(0)?,
+                    directories: row.get(1)?,
+                    logical: row.get(2)?,
+                    allocated: row.get(3)?,
+                    ..Default::default()
+                })
+            },
+        )
+        .map_err(storage_error)
 }
 fn update_aggregate(connection: &Connection, id: i64, totals: Totals) -> Result<(), AppError> {
-    connection.execute("UPDATE directory_aggregates SET files_count=?2,directories_count=?3,logical_size=?4 WHERE entry_id=?1", params![id, integer(totals.files)?, integer(totals.directories)?, integer(totals.logical)?]).map_err(storage_error)?;
+    connection.execute("UPDATE directory_aggregates SET files_count=?2,directories_count=?3,logical_size=?4,allocated_size=?5 WHERE entry_id=?1", params![id, integer(totals.files)?, integer(totals.directories)?, integer(totals.logical)?, totals.allocated.map(integer).transpose()?]).map_err(storage_error)?;
     Ok(())
 }
 
@@ -323,13 +345,13 @@ impl SqliteStorage {
         metadata: &EntryMetadata,
     ) -> Result<(), AppError> {
         let tx = self.connection.transaction().map_err(storage_error)?;
-        tx.execute("INSERT INTO entries(scan_id,parent_id,path,name,kind,logical_size,modified_at_ms,identity) VALUES (?1,NULL,?2,?3,'directory',0,?4,?5)", params![scan_id,encode_path(path),path.to_string_lossy(),metadata.modified_at_ms,metadata.identity]).map_err(storage_error)?;
+        tx.execute("INSERT INTO entries(scan_id,parent_id,path,name,kind,logical_size,allocated_size,created_at_ms,modified_at_ms,accessed_at_ms,identity) VALUES (?1,NULL,?2,?3,'directory',0,NULL,?4,?5,?6,?7)", params![scan_id,encode_path(path),path.to_string_lossy(),metadata.created_at_ms,metadata.modified_at_ms,metadata.accessed_at_ms,metadata.identity]).map_err(storage_error)?;
         let id = tx.last_insert_rowid();
         tx.execute("INSERT INTO directory_queue(entry_id) VALUES (?1)", [id])
             .map_err(storage_error)?;
         tx.execute(
-            "INSERT INTO directory_aggregates(entry_id) VALUES (?1)",
-            [id],
+            "INSERT INTO directory_aggregates(entry_id,allocated_size) VALUES (?1,?2)",
+            params![id, cfg!(unix).then_some(0_i64)],
         )
         .map_err(storage_error)?;
         tx.execute(
@@ -364,14 +386,14 @@ impl SqliteStorage {
         let mut direct = aggregate(&tx, parent)?;
         for entry in entries {
             let m = &entry.metadata;
-            tx.execute("INSERT INTO entries(scan_id,parent_id,path,name,kind,logical_size,modified_at_ms,identity) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)", params![scan_id,parent,encode_path(&entry.path),entry.path.file_name().unwrap_or_default().to_string_lossy(),m.kind.as_str(),integer(m.logical_size)?,m.modified_at_ms,m.identity]).map_err(storage_error)?;
+            tx.execute("INSERT INTO entries(scan_id,parent_id,path,name,kind,logical_size,allocated_size,created_at_ms,modified_at_ms,accessed_at_ms,identity) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)", params![scan_id,parent,encode_path(&entry.path),entry.path.file_name().unwrap_or_default().to_string_lossy(),m.kind.as_str(),integer(m.logical_size)?,m.allocated_size.map(integer).transpose()?,m.created_at_ms,m.modified_at_ms,m.accessed_at_ms,m.identity]).map_err(storage_error)?;
             if m.kind == EntryKind::Directory {
                 let id = tx.last_insert_rowid();
                 tx.execute("INSERT INTO directory_queue(entry_id) VALUES (?1)", [id])
                     .map_err(storage_error)?;
                 tx.execute(
-                    "INSERT INTO directory_aggregates(entry_id) VALUES (?1)",
-                    [id],
+                    "INSERT INTO directory_aggregates(entry_id,allocated_size) VALUES (?1,?2)",
+                    params![id, cfg!(unix).then_some(0_i64)],
                 )
                 .map_err(storage_error)?;
                 tx.execute("UPDATE directory_aggregates SET pending_children=pending_children+1 WHERE entry_id=?1", [parent]).map_err(storage_error)?;
@@ -380,6 +402,11 @@ impl SqliteStorage {
                 files: u64::from(m.kind == EntryKind::File),
                 directories: u64::from(m.kind == EntryKind::Directory),
                 logical: m.logical_size,
+                allocated: if m.kind == EntryKind::File {
+                    m.allocated_size
+                } else {
+                    cfg!(unix).then_some(0)
+                },
                 ..Default::default()
             })?;
         }
@@ -391,7 +418,8 @@ impl SqliteStorage {
             )
             .map_err(storage_error)?;
         }
-        tx.execute("UPDATE scan_sessions SET files_count=?2,directories_count=?3,symlinks_count=?4,skipped_count=?5,logical_size=?6,errors_count=?7 WHERE id=?1", params![scan_id,integer(totals.files)?,integer(totals.directories)?,integer(totals.symlinks)?,integer(totals.skipped)?,integer(totals.logical)?,integer(totals.errors)?]).map_err(storage_error)?;
+        let allocated_size = totals.allocated.map(integer).transpose()?;
+        tx.execute("UPDATE scan_sessions SET files_count=?2,directories_count=?3,symlinks_count=?4,skipped_count=?5,logical_size=?6,allocated_size=?7,errors_count=?8 WHERE id=?1", params![scan_id,integer(totals.files)?,integer(totals.directories)?,integer(totals.symlinks)?,integer(totals.skipped)?,integer(totals.logical)?,allocated_size,integer(totals.errors)?]).map_err(storage_error)?;
         tx.commit().map_err(storage_error)
     }
     pub fn finish_directory(&mut self, id: i64) -> Result<(), AppError> {
@@ -535,33 +563,45 @@ impl SqliteStorage {
     pub fn old_files(
         &self,
         scan_id: i64,
+        criterion: OldFileCriterion,
         older_than_ms: i64,
+        min_size: i64,
         cursor: Option<&str>,
     ) -> Result<OldFilePage, AppError> {
         self.ensure_queryable(scan_id)?;
         let (modified_at_ms, id) = parse_old_files_cursor(cursor)?;
-        let mut statement = self.connection.prepare(
-            "SELECT e.id,e.parent_id,e.name,e.path,e.kind,e.logical_size,e.logical_size,e.modified_at_ms
+        let column = match criterion {
+            OldFileCriterion::Modified => "modified_at_ms",
+            OldFileCriterion::Created => "created_at_ms",
+            OldFileCriterion::Accessed => "accessed_at_ms",
+        };
+        let query = format!(
+            "SELECT e.id,e.parent_id,e.name,e.path,e.kind,e.logical_size,e.logical_size,e.{column}
              FROM entries e
-             WHERE e.scan_id=?1 AND e.kind='file' AND e.modified_at_ms IS NOT NULL
-             AND e.modified_at_ms<?2
-             AND (e.modified_at_ms>?3 OR (e.modified_at_ms=?3 AND e.id>?4))
-             ORDER BY e.modified_at_ms,e.id LIMIT 101",
-        ).map_err(storage_error)?;
+             WHERE e.scan_id=?1 AND e.kind='file' AND e.{column} IS NOT NULL
+             AND e.{column}<?2
+             AND e.logical_size>=?3
+             AND (e.{column}>?4 OR (e.{column}=?4 AND e.id>?5))
+             ORDER BY e.{column},e.id LIMIT 101",
+        );
+        let mut statement = self.connection.prepare(&query).map_err(storage_error)?;
         let mut rows = statement
-            .query_map(params![scan_id, older_than_ms, modified_at_ms, id], |row| {
-                Ok(OldFile {
-                    entry: read_entry(row)?,
-                    modified_at_ms: row.get::<_, i64>(7)?.to_string(),
-                })
-            })
+            .query_map(
+                params![scan_id, older_than_ms, min_size, modified_at_ms, id],
+                |row| {
+                    Ok(OldFile {
+                        entry: read_entry(row)?,
+                        timestamp_ms: row.get::<_, i64>(7)?.to_string(),
+                    })
+                },
+            )
             .map_err(storage_error)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(storage_error)?;
         let next_cursor = if rows.len() > 100 {
             rows.pop();
             rows.last()
-                .map(|file| format!("{}:{}", file.modified_at_ms, file.entry.id))
+                .map(|file| format!("{}:{}", file.timestamp_ms, file.entry.id))
         } else {
             None
         };
@@ -662,7 +702,7 @@ impl SqliteStorage {
         let mut statement = tx.prepare(
             "WITH RECURSIVE subtree(id,depth) AS (
                  SELECT ?2,0 UNION ALL SELECT e.id,s.depth+1 FROM entries e JOIN subtree s ON e.parent_id=s.id WHERE e.scan_id=?1
-             ) SELECT e.id,e.kind,e.logical_size,s.depth FROM entries e JOIN subtree s ON e.id=s.id",
+             ) SELECT e.id,e.kind,e.logical_size,e.allocated_size,s.depth FROM entries e JOIN subtree s ON e.id=s.id",
         ).map_err(storage_error)?;
         let mut rows = statement
             .query_map(params![scan_id, entry_id], |row| {
@@ -670,7 +710,8 @@ impl SqliteStorage {
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, i64>(2)?,
-                    row.get::<_, i64>(3)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, i64>(4)?,
                 ))
             })
             .map_err(storage_error)?
@@ -680,19 +721,32 @@ impl SqliteStorage {
         if rows.is_empty() {
             return Err(AppError::new(ErrorCode::ScanNotFound));
         }
-        let files = rows.iter().filter(|(_, kind, _, _)| kind == "file").count() as i64;
+        let files = rows
+            .iter()
+            .filter(|(_, kind, _, _, _)| kind == "file")
+            .count() as i64;
         let directories = rows
             .iter()
-            .filter(|(_, kind, _, _)| kind == "directory")
+            .filter(|(_, kind, _, _, _)| kind == "directory")
             .count() as i64;
         let symlinks = rows
             .iter()
-            .filter(|(_, kind, _, _)| kind == "symlink")
+            .filter(|(_, kind, _, _, _)| kind == "symlink")
             .count() as i64;
-        let logical = rows.iter().try_fold(0_i64, |total, (_, _, size, _)| {
+        let logical = rows.iter().try_fold(0_i64, |total, (_, _, size, _, _)| {
             total.checked_add(*size).ok_or_else(internal)
         })?;
-        let ids: Vec<i64> = rows.iter().map(|(id, _, _, _)| *id).collect();
+        let allocated = rows
+            .iter()
+            .try_fold(Some(0_i64), |total, (_, _, _, size, _)| {
+                match (total, size) {
+                    (Some(total), Some(size)) => {
+                        total.checked_add(*size).ok_or_else(internal).map(Some)
+                    }
+                    _ => Ok(None),
+                }
+            })?;
+        let ids: Vec<i64> = rows.iter().map(|(id, _, _, _, _)| *id).collect();
         for id in &ids {
             tx.execute("DELETE FROM directory_queue WHERE entry_id=?1", [id])
                 .map_err(storage_error)?;
@@ -702,8 +756,8 @@ impl SqliteStorage {
         let mut ancestor = Some(parent);
         while let Some(id) = ancestor {
             tx.execute(
-                "UPDATE directory_aggregates SET files_count=files_count-?2,directories_count=directories_count-?3,logical_size=logical_size-?4 WHERE entry_id=?1",
-                params![id, files, directories, logical],
+                "UPDATE directory_aggregates SET files_count=files_count-?2,directories_count=directories_count-?3,logical_size=logical_size-?4,allocated_size=CASE WHEN allocated_size IS NULL OR ?5 IS NULL THEN NULL ELSE allocated_size-?5 END WHERE entry_id=?1",
+                params![id, files, directories, logical, allocated],
             ).map_err(storage_error)?;
             ancestor = tx
                 .query_row("SELECT parent_id FROM entries WHERE id=?1", [id], |row| {
@@ -713,14 +767,14 @@ impl SqliteStorage {
                 .map_err(storage_error)?
                 .flatten();
         }
-        rows.sort_by_key(|(_, _, _, depth)| std::cmp::Reverse(*depth));
-        for (id, _, _, _) in rows {
+        rows.sort_by_key(|(_, _, _, _, depth)| std::cmp::Reverse(*depth));
+        for (id, _, _, _, _) in rows {
             tx.execute("DELETE FROM entries WHERE id=?1", [id])
                 .map_err(storage_error)?;
         }
         tx.execute(
-            "UPDATE scan_sessions SET files_count=files_count-?2,directories_count=directories_count-?3,symlinks_count=symlinks_count-?4,logical_size=logical_size-?5 WHERE id=?1",
-            params![scan_id, files, directories, symlinks, logical],
+            "UPDATE scan_sessions SET files_count=files_count-?2,directories_count=directories_count-?3,symlinks_count=symlinks_count-?4,logical_size=logical_size-?5,allocated_size=CASE WHEN allocated_size IS NULL OR ?6 IS NULL THEN NULL ELSE allocated_size-?6 END WHERE id=?1",
+            params![scan_id, files, directories, symlinks, logical, allocated],
         ).map_err(storage_error)?;
         tx.commit().map_err(storage_error)
     }
@@ -747,6 +801,92 @@ impl SqliteStorage {
                     size: size.to_string(),
                     files_count: count.to_string(),
                     reclaimable_size: reclaimable.to_string(),
+                })
+            })
+            .map_err(storage_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(storage_error)?;
+        let next_cursor = if rows.len() > 50 {
+            rows.pop();
+            rows.last().map(|group| group.size.clone())
+        } else {
+            None
+        };
+        Ok(DuplicateGroupPage {
+            items: rows,
+            next_cursor,
+        })
+    }
+    pub fn duplicate_hash_candidates(&self) -> Result<(i64, Vec<HashCandidate>), AppError> {
+        let scan = self
+            .latest_queryable_scan()?
+            .ok_or_else(|| AppError::new(ErrorCode::ScanNotReady))?;
+        let mut statement = self.connection.prepare(
+            "SELECT e.id,e.path,e.logical_size,e.identity,e.modified_at_ms FROM entries e
+             WHERE e.scan_id=?1 AND e.kind='file' AND e.logical_size IN (
+               SELECT logical_size FROM entries WHERE scan_id=?1 AND kind='file' GROUP BY logical_size HAVING COUNT(*)>1
+             ) ORDER BY e.logical_size,e.id",
+        ).map_err(storage_error)?;
+        let items = statement
+            .query_map([parse_id(&scan.id)?], |row| {
+                let size: i64 = row.get(2)?;
+                Ok(HashCandidate {
+                    id: row.get(0)?,
+                    path: decode_path(row.get(1)?).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            1,
+                            rusqlite::types::Type::Blob,
+                            Box::new(error),
+                        )
+                    })?,
+                    size: u64::try_from(size)
+                        .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(2, size))?,
+                    identity: row.get(3)?,
+                    modified_at_ms: row.get(4)?,
+                })
+            })
+            .map_err(storage_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(storage_error)?;
+        Ok((parse_id(&scan.id)?, items))
+    }
+    pub fn record_content_hash(
+        &mut self,
+        scan_id: i64,
+        entry_id: i64,
+        hash: &str,
+    ) -> Result<(), AppError> {
+        self.connection
+            .execute(
+                "UPDATE entries SET content_hash=?3 WHERE scan_id=?1 AND id=?2",
+                params![scan_id, entry_id, hash],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+    pub fn confirmed_duplicates(
+        &self,
+        after_size: Option<i64>,
+    ) -> Result<DuplicateGroupPage, AppError> {
+        let Some(scan) = self.latest_queryable_scan()? else {
+            return Ok(DuplicateGroupPage {
+                items: vec![],
+                next_cursor: None,
+            });
+        };
+        let after = after_size.unwrap_or(i64::MAX);
+        let mut statement = self.connection.prepare("SELECT logical_size,COUNT(*) FROM entries WHERE scan_id=?1 AND kind='file' AND content_hash IS NOT NULL AND logical_size<?2 GROUP BY logical_size,content_hash HAVING COUNT(*)>1 ORDER BY logical_size DESC,content_hash LIMIT 51").map_err(storage_error)?;
+        let mut rows = statement
+            .query_map(params![scan.id, after], |row| {
+                let size: i64 = row.get(0)?;
+                let count: i64 = row.get(1)?;
+                Ok(DuplicateGroup {
+                    size: size.to_string(),
+                    files_count: count.to_string(),
+                    reclaimable_size: size
+                        .checked_mul(count.saturating_sub(1))
+                        .ok_or(rusqlite::Error::IntegralValueOutOfRange(0, i64::MAX))?
+                        .to_string(),
                 })
             })
             .map_err(storage_error)?

@@ -58,6 +58,7 @@ pub fn scan(
 ) -> Result<ScanState, AppError> {
     let mut totals = Totals {
         directories: 1,
+        allocated: cfg!(unix).then_some(0),
         ..Default::default()
     };
     while !cancel.load(Ordering::Acquire) {
@@ -70,7 +71,10 @@ pub fn scan(
         };
         let mut entries = Vec::with_capacity(BATCH_SIZE);
         let mut issues = Vec::new();
-        let mut delta = Totals::default();
+        let mut delta = Totals {
+            allocated: cfg!(unix).then_some(0),
+            ..Default::default()
+        };
         let metadata = fs.metadata(&task.path);
         let valid = metadata.as_ref().is_ok_and(|current| {
             current.kind == EntryKind::Directory
@@ -126,18 +130,22 @@ pub fn scan(
                                 EntryKind::File => Totals {
                                     files: 1,
                                     logical: metadata.logical_size,
+                                    allocated: metadata.allocated_size,
                                     ..Default::default()
                                 },
                                 EntryKind::Directory => Totals {
                                     directories: 1,
+                                    allocated: cfg!(unix).then_some(0),
                                     ..Default::default()
                                 },
                                 EntryKind::Symlink => Totals {
                                     symlinks: 1,
+                                    allocated: cfg!(unix).then_some(0),
                                     ..Default::default()
                                 },
                                 EntryKind::Other => Totals {
                                     skipped: 1,
+                                    allocated: cfg!(unix).then_some(0),
                                     ..Default::default()
                                 },
                             };
@@ -155,7 +163,10 @@ pub fn scan(
                     totals = next;
                     entries.clear();
                     issues.clear();
-                    delta = Totals::default();
+                    delta = Totals {
+                        allocated: cfg!(unix).then_some(0),
+                        ..Default::default()
+                    };
                     progress();
                 }
             },
@@ -186,7 +197,10 @@ mod tests {
                     EntryKind::File
                 },
                 logical_size: if directory { 0 } else { 3 },
+                allocated_size: None,
+                created_at_ms: None,
                 modified_at_ms: None,
+                accessed_at_ms: None,
                 identity: None,
             })
         }
@@ -317,7 +331,10 @@ mod tests {
             Ok(EntryMetadata {
                 kind: EntryKind::Directory,
                 logical_size: 0,
+                allocated_size: None,
+                created_at_ms: None,
                 modified_at_ms: None,
+                accessed_at_ms: None,
                 identity: None,
             })
         }

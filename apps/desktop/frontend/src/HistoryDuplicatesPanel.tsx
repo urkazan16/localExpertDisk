@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import {
   compareScans,
-  getDuplicateCandidates,
+  confirmDuplicates,
+  deleteScanHistory,
   getScanHistory,
   type DuplicateGroupPage,
   type ScanComparison,
@@ -15,11 +16,14 @@ export function HistoryDuplicatesPanel({ enabled }: { enabled: boolean }) {
   const [comparison, setComparison] = useState<ScanComparison | null>(null);
   const [duplicates, setDuplicates] = useState<DuplicateGroupPage | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!enabled) return;
+  function loadHistory() {
     getScanHistory().then(setHistory, (reason: unknown) =>
       setError(errorMessage(reason)),
     );
+  }
+  useEffect(() => {
+    if (!enabled) return;
+    loadHistory();
   }, [enabled]);
   if (!enabled) return null;
   return (
@@ -29,9 +33,22 @@ export function HistoryDuplicatesPanel({ enabled }: { enabled: boolean }) {
       <section className="analysis-block">
         <h3>История сканирований</h3>
         {history?.items.map((scan) => (
-          <p key={scan.id}>
-            #{scan.id} · {formatBytes(scan.logical_size)} · {scan.state}
-          </p>
+          <div className="history-row" key={scan.id}>
+            <p>
+              #{scan.id} · {formatBytes(scan.logical_size)} · {scan.state}
+            </p>
+            <button
+              className="secondary"
+              onClick={() =>
+                deleteScanHistory(scan.id).then(
+                  loadHistory,
+                  (reason: unknown) => setError(errorMessage(reason)),
+                )
+              }
+            >
+              Удалить из истории
+            </button>
+          </div>
         ))}
         {history && history.items.length > 1 && (
           <button
@@ -47,14 +64,22 @@ export function HistoryDuplicatesPanel({ enabled }: { enabled: boolean }) {
           </button>
         )}
         {comparison && (
-          <p>
-            Изменение объёма:{" "}
-            {formatBytes(comparison.logical_size_delta.replace("-", ""))}
-            {comparison.logical_size_delta.startsWith("-")
-              ? " меньше"
-              : " больше"}
-            .
-          </p>
+          <div>
+            <p>
+              Изменение объёма:{" "}
+              {formatBytes(comparison.logical_size_delta.replace("-", ""))}
+              {comparison.logical_size_delta.startsWith("-")
+                ? " меньше"
+                : " больше"}
+              .
+            </p>
+            <p className="hint">
+              Добавлено: {comparison.added_files_count} · Удалено:{" "}
+              {comparison.removed_files_count} · Изменено:{" "}
+              {comparison.modified_files_count} · Перемещено:{" "}
+              {comparison.moved_files_count}
+            </p>
+          </div>
         )}
       </section>
       <section className="analysis-block">
@@ -63,12 +88,12 @@ export function HistoryDuplicatesPanel({ enabled }: { enabled: boolean }) {
           <button
             className="secondary"
             onClick={() =>
-              getDuplicateCandidates().then(setDuplicates, (reason: unknown) =>
+              confirmDuplicates().then(setDuplicates, (reason: unknown) =>
                 setError(errorMessage(reason)),
               )
             }
           >
-            Показать
+            Проверить содержимое
           </button>
         </div>
         {duplicates &&
@@ -85,7 +110,8 @@ export function HistoryDuplicatesPanel({ enabled }: { enabled: boolean }) {
             <p className="hint">Групп одинакового размера нет.</p>
           ))}
         <p className="hint">
-          Это кандидаты по одинаковому размеру. Содержимое ещё не хешировалось.
+          Показаны только группы с совпадающим полным SHA-256. Файлы не
+          удаляются автоматически.
         </p>
       </section>
     </section>

@@ -64,6 +64,7 @@ fn nested_tree_counts_sizes_parent_relations_and_aggregates_survive_restart() {
     fs::write(f.root.join("zero.bin"), []).unwrap();
     let result = run_fixture(&f, Arc::new(NativeFileSystem));
     assert_eq!(result.state, ScanState::Completed);
+    assert_eq!(result.allocated_size.is_some(), cfg!(unix));
     assert_eq!(
         (
             &result.files_count,
@@ -75,6 +76,17 @@ fn nested_tree_counts_sizes_parent_relations_and_aggregates_survive_restart() {
     let connection = Connection::open(&f.db).unwrap();
     let aggregate: (i64,i64,i64) = connection.query_row("SELECT a.files_count,a.directories_count,a.logical_size FROM directory_aggregates a JOIN entries e ON e.id=a.entry_id WHERE e.parent_id IS NULL",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
     assert_eq!(aggregate, (3, 3, 30));
+    let root_allocated: Option<i64> = connection
+        .query_row(
+            "SELECT a.allocated_size FROM directory_aggregates a JOIN entries e ON e.id=a.entry_id WHERE e.parent_id IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        root_allocated.map(|value| value.to_string()),
+        result.allocated_size
+    );
     let parent: String = connection.query_row("SELECT p.name FROM entries child JOIN entries p ON p.id=child.parent_id WHERE child.name='два.bin'",[],|row|row.get(0)).unwrap();
     assert_eq!(parent, "b");
     assert_eq!(
@@ -137,13 +149,19 @@ fn completed_scan_exposes_bounded_folder_large_file_and_search_pages() {
         "small.txt"
     );
     let old_files = service
-        .old_files(&session.id, &i64::MAX.to_string(), None)
+        .old_files(
+            &session.id,
+            OldFileCriterion::Modified,
+            &i64::MAX.to_string(),
+            None,
+            None,
+        )
         .unwrap();
     assert_eq!(old_files.items.len(), 2);
     assert!(old_files
         .items
         .iter()
-        .all(|file| !file.modified_at_ms.is_empty()));
+        .all(|file| !file.timestamp_ms.is_empty()));
     service.shutdown().unwrap();
 }
 
@@ -160,13 +178,21 @@ fn old_files_are_keyset_paginated_and_reject_invalid_cutoffs() {
         .unwrap();
     assert_eq!(wait_terminal(&rx).state, ScanState::Completed);
     let first = service
-        .old_files(&session.id, &i64::MAX.to_string(), None)
+        .old_files(
+            &session.id,
+            OldFileCriterion::Modified,
+            &i64::MAX.to_string(),
+            None,
+            None,
+        )
         .unwrap();
     assert_eq!(first.items.len(), 100);
     let second = service
         .old_files(
             &session.id,
+            OldFileCriterion::Modified,
             &i64::MAX.to_string(),
+            None,
             first.next_cursor.as_deref(),
         )
         .unwrap();
@@ -176,7 +202,65 @@ fn old_files_are_keyset_paginated_and_reject_invalid_cutoffs() {
         second.items[0].entry.id
     );
     assert_eq!(
-        service.old_files(&session.id, "-1", None).unwrap_err().code,
+        service
+            .old_files(&session.id, OldFileCriterion::Modified, "-1", None, None)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidTarget
+    );
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn old_files_filter_by_selected_timestamp_and_minimum_size() {
+    let f = Fixture::new();
+    fs::write(f.root.join("small.bin"), [0; 2]).unwrap();
+    fs::write(f.root.join("large.bin"), [0; 20]).unwrap();
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    let session = service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    assert_eq!(wait_terminal(&rx).state, ScanState::Completed);
+
+    let connection = Connection::open(&f.db).unwrap();
+    connection
+        .execute(
+            "UPDATE entries SET created_at_ms=100,accessed_at_ms=200 WHERE scan_id=?1 AND kind='file'",
+            [session.id.parse::<i64>().unwrap()],
+        )
+        .unwrap();
+    drop(connection);
+
+    let created = service
+        .old_files(
+            &session.id,
+            OldFileCriterion::Created,
+            "101",
+            Some("10"),
+            None,
+        )
+        .unwrap();
+    assert_eq!(created.items.len(), 1);
+    assert_eq!(created.items[0].entry.name, "large.bin");
+    assert_eq!(created.items[0].timestamp_ms, "100");
+
+    let accessed = service
+        .old_files(&session.id, OldFileCriterion::Accessed, "201", None, None)
+        .unwrap();
+    assert_eq!(accessed.items.len(), 2);
+    assert!(accessed.items.iter().all(|file| file.timestamp_ms == "200"));
+    assert_eq!(
+        service
+            .old_files(
+                &session.id,
+                OldFileCriterion::Modified,
+                "101",
+                Some("-1"),
+                None,
+            )
+            .unwrap_err()
+            .code,
         ErrorCode::InvalidTarget
     );
     service.shutdown().unwrap();
@@ -424,6 +508,25 @@ fn duplicate_candidates_use_last_completed_scan_when_newer_scan_failed() {
         service.duplicate_candidates(None).unwrap().items[0].size,
         "4"
     );
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn duplicate_confirmation_requires_matching_content_not_just_size() {
+    let f = Fixture::new();
+    fs::write(f.root.join("copy-a"), b"identical-content").unwrap();
+    fs::write(f.root.join("copy-b"), b"identical-content").unwrap();
+    fs::write(f.root.join("same-size-different"), b"different-content").unwrap();
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    assert_eq!(wait_terminal(&rx).state, ScanState::Completed);
+    let groups = service.confirm_duplicates().unwrap();
+    assert_eq!(groups.items.len(), 1);
+    assert_eq!(groups.items[0].files_count, "2");
+    assert_eq!(groups.items[0].size, "17");
     service.shutdown().unwrap();
 }
 

@@ -1,8 +1,8 @@
 use analyzer::Totals;
 use domain::{
-    AppError, AppInfo, DuplicateGroupPage, EntryPage, ErrorCode, IndexedEntry, OldFilePage,
-    ScanComparison, ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState,
-    StartScanRequest,
+    AppError, AppInfo, BatchOperationResult, DuplicateGroupPage, EntryPage, ErrorCode,
+    IndexedEntry, OldFileCriterion, OldFilePage, ScanComparison, ScanHistoryPage, ScanIssue,
+    ScanIssuePage, ScanSession, ScanState, StartScanRequest,
 };
 use filesystem::{
     native::{EntryKind, FileSystemProvider, NativeFileSystem},
@@ -10,6 +10,8 @@ use filesystem::{
     LocalPlatform,
 };
 use scanner::{DirectoryTask, EntryDraft, ScanSink};
+use sha2::{Digest, Sha256};
+use std::io::{Read, Seek, SeekFrom};
 use std::{
     fs::{File, OpenOptions},
     path::{Path, PathBuf},
@@ -146,6 +148,38 @@ impl ScanService {
             .transpose()?;
         guard(&self.shared.storage)?.duplicate_candidates(after)
     }
+    pub fn confirm_duplicates(&self) -> Result<DuplicateGroupPage, AppError> {
+        let (scan_id, candidates) = guard(&self.shared.storage)?.duplicate_hash_candidates()?;
+        let mut fingerprints = std::collections::BTreeMap::<(u64, String), Vec<_>>::new();
+        for candidate in candidates {
+            let metadata = NativeFileSystem
+                .metadata(&candidate.path)
+                .map_err(|_| AppError::new(ErrorCode::EntryChanged))?;
+            if metadata.kind != EntryKind::File
+                || metadata.logical_size != candidate.size
+                || (candidate.identity.is_some() && metadata.identity != candidate.identity)
+                || (candidate.modified_at_ms.is_some()
+                    && metadata.modified_at_ms != candidate.modified_at_ms)
+            {
+                continue;
+            }
+            let fingerprint = hash_file(&candidate.path, candidate.size, true)?;
+            fingerprints
+                .entry((candidate.size, fingerprint))
+                .or_default()
+                .push(candidate);
+        }
+        for (_, group) in fingerprints
+            .into_iter()
+            .filter(|(_, group)| group.len() > 1)
+        {
+            for candidate in group {
+                let hash = hash_file(&candidate.path, candidate.size, false)?;
+                guard(&self.shared.storage)?.record_content_hash(scan_id, candidate.id, &hash)?;
+            }
+        }
+        guard(&self.shared.storage)?.confirmed_duplicates(None)
+    }
     pub fn issues(&self, id: &str, after: Option<&str>) -> Result<ScanIssuePage, AppError> {
         guard(&self.shared.storage)?
             .scan_issues(parse_id(id)?, after.map(parse_id).transpose()?.unwrap_or(0))
@@ -171,7 +205,9 @@ impl ScanService {
     pub fn old_files(
         &self,
         scan_id: &str,
+        criterion: OldFileCriterion,
         older_than_ms: &str,
+        min_size: Option<&str>,
         after: Option<&str>,
     ) -> Result<OldFilePage, AppError> {
         let older_than_ms = older_than_ms
@@ -179,7 +215,21 @@ impl ScanService {
             .ok()
             .filter(|value| *value >= 0)
             .ok_or_else(|| AppError::new(ErrorCode::InvalidTarget))?;
-        guard(&self.shared.storage)?.old_files(parse_id(scan_id)?, older_than_ms, after)
+        let min_size = match min_size {
+            Some(value) => value
+                .parse::<i64>()
+                .ok()
+                .filter(|value| *value >= 0)
+                .ok_or_else(|| AppError::new(ErrorCode::InvalidTarget))?,
+            None => 0,
+        };
+        guard(&self.shared.storage)?.old_files(
+            parse_id(scan_id)?,
+            criterion,
+            older_than_ms,
+            min_size,
+            after,
+        )
     }
     pub fn search(
         &self,
@@ -205,6 +255,27 @@ impl ScanService {
     }
     pub fn move_to_trash(&self, scan_id: &str, entry_id: &str) -> Result<(), AppError> {
         self.move_to_trash_with(scan_id, entry_id, &NativeTrash, &NativeFileSystem)
+    }
+    pub fn move_entries_to_trash(
+        &self,
+        scan_id: &str,
+        entry_ids: &[String],
+    ) -> Result<BatchOperationResult, AppError> {
+        if entry_ids.is_empty() || entry_ids.len() > 100 {
+            return Err(AppError::new(ErrorCode::InvalidTarget));
+        }
+        let mut moved_entry_ids = Vec::new();
+        let mut failed_entry_ids = Vec::new();
+        for entry_id in entry_ids {
+            match self.move_to_trash(scan_id, entry_id) {
+                Ok(()) => moved_entry_ids.push(entry_id.clone()),
+                Err(_) => failed_entry_ids.push(entry_id.clone()),
+            }
+        }
+        Ok(BatchOperationResult {
+            moved_entry_ids,
+            failed_entry_ids,
+        })
     }
     fn move_to_trash_with(
         &self,
@@ -351,6 +422,41 @@ impl ScanService {
         }
         Ok(())
     }
+}
+
+fn hash_file(path: &Path, size: u64, partial: bool) -> Result<String, AppError> {
+    const CHUNK: u64 = 64 * 1024;
+    let mut file = File::open(path).map_err(|_| AppError::new(ErrorCode::EntryChanged))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0; CHUNK.min(size) as usize];
+    if partial {
+        file.read_exact(&mut buffer)
+            .map_err(|_| AppError::new(ErrorCode::EntryChanged))?;
+        hasher.update(&buffer);
+        if size > CHUNK {
+            file.seek(SeekFrom::Start(size - CHUNK))
+                .map_err(|_| AppError::new(ErrorCode::EntryChanged))?;
+            let mut tail = vec![0; CHUNK as usize];
+            file.read_exact(&mut tail)
+                .map_err(|_| AppError::new(ErrorCode::EntryChanged))?;
+            hasher.update(&tail);
+        }
+    } else {
+        loop {
+            let read = file
+                .read(&mut buffer)
+                .map_err(|_| AppError::new(ErrorCode::EntryChanged))?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+        }
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
 }
 
 struct ProtectedPathPolicy;

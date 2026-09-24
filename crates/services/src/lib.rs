@@ -26,11 +26,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = SqliteStorage::open(&dir.path().join("test.db")).unwrap();
         let info = get_app_info(&storage, &LocalPlatform).unwrap();
-        assert_eq!(info.schema_version, 5);
+        assert_eq!(info.schema_version, 9);
         assert_eq!(
             info.capabilities,
             domain::Capabilities {
                 trash: cfg!(target_os = "macos"),
+                allocated_size: cfg!(unix),
+                duplicate_hashing: true,
                 ..Default::default()
             }
         );
