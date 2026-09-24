@@ -180,6 +180,7 @@ mod tests {
                     EntryKind::File
                 },
                 logical_size: if directory { 0 } else { 3 },
+                modified_at_ms: None,
                 identity: None,
             })
         }

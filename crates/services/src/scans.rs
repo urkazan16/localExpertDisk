@@ -1,7 +1,7 @@
 use analyzer::Totals;
 use domain::{
-    AppError, AppInfo, ErrorCode, ScanIssue, ScanIssuePage, ScanSession, ScanState,
-    StartScanRequest,
+    AppError, AppInfo, DuplicateGroupPage, EntryPage, ErrorCode, IndexedEntry, ScanComparison,
+    ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState, StartScanRequest,
 };
 use filesystem::{
     native::{EntryKind, FileSystemProvider, NativeFileSystem},
@@ -11,6 +11,7 @@ use scanner::{DirectoryTask, EntryDraft, ScanSink};
 use std::{
     fs::{File, OpenOptions},
     path::{Path, PathBuf},
+    process::Command,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, MutexGuard,
@@ -41,6 +42,44 @@ struct Shared {
 #[derive(Clone)]
 pub struct ScanService {
     shared: Arc<Shared>,
+}
+
+trait EntryLauncher {
+    fn launch(&self, path: &Path, reveal: bool) -> Result<(), AppError>;
+}
+
+struct NativeEntryLauncher;
+impl EntryLauncher for NativeEntryLauncher {
+    fn launch(&self, path: &Path, reveal: bool) -> Result<(), AppError> {
+        let mut command = if cfg!(target_os = "macos") {
+            let mut command = Command::new("open");
+            if reveal {
+                command.arg("-R");
+            }
+            command.arg(path);
+            command
+        } else if cfg!(target_os = "windows") {
+            let mut command = Command::new("explorer.exe");
+            if reveal {
+                command.arg(format!("/select,{}", path.display()));
+            } else {
+                command.arg(path);
+            }
+            command
+        } else {
+            let mut command = Command::new("xdg-open");
+            command.arg(if reveal {
+                path.parent().unwrap_or(path)
+            } else {
+                path
+            });
+            command
+        };
+        command
+            .spawn()
+            .map(|_| ())
+            .map_err(|_| AppError::new(ErrorCode::LaunchFailed))
+    }
 }
 impl ScanService {
     /// The database and lock must live in the application's own writable directory.
@@ -81,9 +120,84 @@ impl ScanService {
             None => storage.latest_scan(),
         }
     }
+    pub fn history(&self, after: Option<&str>) -> Result<ScanHistoryPage, AppError> {
+        guard(&self.shared.storage)?.scan_history(after.map(parse_id).transpose()?.unwrap_or(0))
+    }
+    pub fn compare(&self, newer: &str, older: &str) -> Result<ScanComparison, AppError> {
+        guard(&self.shared.storage)?.compare_scans(parse_id(newer)?, parse_id(older)?)
+    }
+    pub fn duplicate_candidates(
+        &self,
+        after: Option<&str>,
+    ) -> Result<DuplicateGroupPage, AppError> {
+        let after = after
+            .map(|value| {
+                value
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|value| *value >= 0)
+                    .ok_or_else(|| AppError::new(ErrorCode::ScanNotFound))
+            })
+            .transpose()?;
+        guard(&self.shared.storage)?.duplicate_candidates(after)
+    }
     pub fn issues(&self, id: &str, after: Option<&str>) -> Result<ScanIssuePage, AppError> {
         guard(&self.shared.storage)?
             .scan_issues(parse_id(id)?, after.map(parse_id).transpose()?.unwrap_or(0))
+    }
+    pub fn root(&self, id: &str) -> Result<IndexedEntry, AppError> {
+        guard(&self.shared.storage)?.scan_root(parse_id(id)?)
+    }
+    pub fn children(
+        &self,
+        scan_id: &str,
+        directory_id: &str,
+        after: Option<&str>,
+    ) -> Result<EntryPage, AppError> {
+        guard(&self.shared.storage)?.children(
+            parse_id(scan_id)?,
+            parse_id(directory_id)?,
+            after.map(parse_id).transpose()?.unwrap_or(0),
+        )
+    }
+    pub fn large_files(&self, scan_id: &str, after: Option<&str>) -> Result<EntryPage, AppError> {
+        guard(&self.shared.storage)?.large_files(parse_id(scan_id)?, after)
+    }
+    pub fn search(
+        &self,
+        scan_id: &str,
+        text: &str,
+        after: Option<&str>,
+    ) -> Result<EntryPage, AppError> {
+        let text = text.trim();
+        if text.is_empty() || text.len() > 256 || text.contains('\0') {
+            return Err(AppError::new(ErrorCode::InvalidTarget));
+        }
+        guard(&self.shared.storage)?.search(
+            parse_id(scan_id)?,
+            text,
+            after.map(parse_id).transpose()?.unwrap_or(0),
+        )
+    }
+    pub fn open_entry(&self, scan_id: &str, entry_id: &str) -> Result<(), AppError> {
+        self.launch_entry_with(scan_id, entry_id, false, &NativeEntryLauncher)
+    }
+    pub fn reveal_entry(&self, scan_id: &str, entry_id: &str) -> Result<(), AppError> {
+        self.launch_entry_with(scan_id, entry_id, true, &NativeEntryLauncher)
+    }
+    fn launch_entry_with(
+        &self,
+        scan_id: &str,
+        entry_id: &str,
+        reveal: bool,
+        launcher: &impl EntryLauncher,
+    ) -> Result<(), AppError> {
+        let path =
+            guard(&self.shared.storage)?.entry_path(parse_id(scan_id)?, parse_id(entry_id)?)?;
+        if std::fs::symlink_metadata(&path).is_err() {
+            return Err(AppError::new(ErrorCode::InvalidTarget));
+        }
+        launcher.launch(&path, reveal)
     }
     pub fn start(
         &self,

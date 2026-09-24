@@ -25,6 +25,7 @@ impl EntryKind {
 pub struct EntryMetadata {
     pub kind: EntryKind,
     pub logical_size: u64,
+    pub modified_at_ms: Option<i64>,
     pub identity: Option<String>,
 }
 pub type DirectoryEntries = Box<dyn Iterator<Item = io::Result<PathBuf>> + Send>;
@@ -65,6 +66,11 @@ impl FileSystemProvider for NativeFileSystem {
             } else {
                 0
             },
+            modified_at_ms: metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|duration| i64::try_from(duration.as_millis()).ok()),
             identity,
         })
     }

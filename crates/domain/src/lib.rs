@@ -14,6 +14,8 @@ pub enum ErrorCode {
     ScanNotFound,
     InvalidTransition,
     SizeOverflow,
+    ScanNotReady,
+    LaunchFailed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -93,6 +95,8 @@ impl AppError {
             ErrorCode::ScanNotFound => "scan_not_found",
             ErrorCode::InvalidTransition => "invalid_transition",
             ErrorCode::SizeOverflow => "size_overflow",
+            ErrorCode::ScanNotReady => "scan_not_ready",
+            ErrorCode::LaunchFailed => "launch_failed",
         };
         Self {
             code,
@@ -182,6 +186,61 @@ pub struct ScanIssue {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ScanIssuePage {
     pub items: Vec<ScanIssue>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexedEntryKind {
+    File,
+    Directory,
+    Symlink,
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct IndexedEntry {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub name: String,
+    pub path: String,
+    pub kind: IndexedEntryKind,
+    pub logical_size: String,
+    /// The complete descendant size for directories, otherwise the file size.
+    pub aggregate_size: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct EntryPage {
+    pub items: Vec<IndexedEntry>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct ScanHistoryPage {
+    pub items: Vec<ScanSession>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct ScanComparison {
+    pub newer_scan_id: String,
+    pub older_scan_id: String,
+    pub files_delta: String,
+    pub directories_delta: String,
+    pub logical_size_delta: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct DuplicateGroup {
+    pub size: String,
+    pub files_count: String,
+    pub reclaimable_size: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct DuplicateGroupPage {
+    pub items: Vec<DuplicateGroup>,
     pub next_cursor: Option<String>,
 }
 

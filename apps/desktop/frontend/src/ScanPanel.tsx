@@ -80,7 +80,13 @@ export function formatBytes(value: string): string {
   return `${whole.toLocaleString("ru-RU")}${unit && tenth ? "," + tenth.toString() : ""} ${units[unit]}`;
 }
 
-export function ScanPanel({ enabled }: { enabled: boolean }) {
+export function ScanPanel({
+  enabled,
+  onScanChange,
+}: {
+  enabled: boolean;
+  onScanChange?: (scan: ScanSession | null) => void;
+}) {
   const [root, setRoot] = useState("");
   const [volumes, setVolumes] = useState<VolumeInfo[]>([]);
   const [volumeError, setVolumeError] = useState<string | null>(null);
@@ -101,6 +107,9 @@ export function ScanPanel({ enabled }: { enabled: boolean }) {
       mounted.current = false;
     };
   }, []);
+  useEffect(() => {
+    onScanChange?.(scan);
+  }, [onScanChange, scan]);
   useEffect(() => {
     if (!enabled) return;
     let active = true;

@@ -1,7 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use domain::{
-    AppError, AppInfo, ErrorCode, ScanIssuePage, ScanSession, StartScanRequest, VolumeInfo,
+    AppError, AppInfo, DuplicateGroupPage, EntryPage, ErrorCode, IndexedEntry, ScanComparison,
+    ScanHistoryPage, ScanIssuePage, ScanSession, StartScanRequest, VolumeInfo,
 };
 use filesystem::volumes::{LocalVolumes, VolumeProvider};
 use services::scans::ScanService;
@@ -74,6 +75,110 @@ async fn get_scan_issues(
         .await
         .map_err(|_| internal())?
 }
+#[tauri::command]
+async fn get_scan_root(
+    state: tauri::State<'_, AppState>,
+    scan_id: String,
+) -> Result<IndexedEntry, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.root(&scan_id))
+        .await
+        .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn get_children(
+    state: tauri::State<'_, AppState>,
+    scan_id: String,
+    directory_id: String,
+    after_id: Option<String>,
+) -> Result<EntryPage, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        service.children(&scan_id, &directory_id, after_id.as_deref())
+    })
+    .await
+    .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn get_large_files(
+    state: tauri::State<'_, AppState>,
+    scan_id: String,
+    after_id: Option<String>,
+) -> Result<EntryPage, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.large_files(&scan_id, after_id.as_deref()))
+        .await
+        .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn search_entries(
+    state: tauri::State<'_, AppState>,
+    scan_id: String,
+    text: String,
+    after_id: Option<String>,
+) -> Result<EntryPage, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        service.search(&scan_id, &text, after_id.as_deref())
+    })
+    .await
+    .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn open_entry(
+    state: tauri::State<'_, AppState>,
+    scan_id: String,
+    entry_id: String,
+) -> Result<(), AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.open_entry(&scan_id, &entry_id))
+        .await
+        .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn reveal_entry(
+    state: tauri::State<'_, AppState>,
+    scan_id: String,
+    entry_id: String,
+) -> Result<(), AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.reveal_entry(&scan_id, &entry_id))
+        .await
+        .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn get_scan_history(
+    state: tauri::State<'_, AppState>,
+    after_id: Option<String>,
+) -> Result<ScanHistoryPage, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.history(after_id.as_deref()))
+        .await
+        .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn compare_scans(
+    state: tauri::State<'_, AppState>,
+    newer_scan_id: String,
+    older_scan_id: String,
+) -> Result<ScanComparison, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.compare(&newer_scan_id, &older_scan_id))
+        .await
+        .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn get_duplicate_candidates(
+    state: tauri::State<'_, AppState>,
+    after_size: Option<String>,
+) -> Result<DuplicateGroupPage, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        service.duplicate_candidates(after_size.as_deref())
+    })
+    .await
+    .map_err(|_| internal())?
+}
 fn initialize_storage(app: &tauri::App) -> Result<ScanService, AppError> {
     let unavailable = || AppError::new(ErrorCode::StorageUnavailable);
     let directory = app.path().app_data_dir().map_err(|_| unavailable())?;
@@ -90,7 +195,16 @@ fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         start_scan,
         cancel_scan,
         get_scan,
-        get_scan_issues
+        get_scan_issues,
+        get_scan_root,
+        get_children,
+        get_large_files,
+        search_entries,
+        open_entry,
+        reveal_entry,
+        get_scan_history,
+        compare_scans,
+        get_duplicate_candidates
     ])
 }
 fn main() {
@@ -156,7 +270,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let storage = ScanService::open(&directory.path().join("ipc.db")).unwrap();
         let response = invoke(AppState(Ok(storage))).unwrap();
-        assert_eq!(response.schema_version, 2);
+        assert_eq!(response.schema_version, 4);
         assert_eq!(response.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(response.capabilities, Default::default());
     }

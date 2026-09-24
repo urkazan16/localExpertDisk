@@ -259,11 +259,70 @@ progress {
   border-bottom: 1px solid #e1e6d9;
   padding: 12px 0;
 }
+.analysis-block {
+  border-top: 1px solid #d6dcd0;
+  margin-top: 26px;
+  padding-top: 24px;
+}
+.analysis-block h3 {
+  margin-bottom: 8px;
+}
+.entry-list {
+  list-style: none;
+  margin: 14px 0;
+  max-height: 430px;
+  overflow: auto;
+  padding: 0;
+  border-top: 1px solid #e1e6d9;
+}
+.entry-list li {
+  align-items: center;
+  border-bottom: 1px solid #e1e6d9;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  padding: 10px 0;
+}
+.entry-list strong,
+.entry-list span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.entry-list div > span {
+  color: #657060;
+  font-size: 12px;
+}
+.entry-list li > span {
+  font-size: 13px;
+  text-align: right;
+}
+.entry-list button {
+  padding: 6px 10px;
+}
+.entry-actions {
+  display: flex;
+  gap: 6px;
+}
+.search-form {
+  display: grid;
+  gap: 9px;
+}
+.search-form label {
+  font-size: 13px;
+  font-weight: 600;
+}
 @media (max-width: 680px) {
   .path-row {
     flex-direction: column;
   }
   .scan-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .entry-list li {
+    align-items: start;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .entry-list button {
+    grid-column: 1 / -1;
   }
 }

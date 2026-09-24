@@ -1,9 +1,16 @@
 import { useEffect, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
-import { getAppInfo, type AppInfo, type Platform } from "./api/generated";
+import {
+  getAppInfo,
+  type AppInfo,
+  type Platform,
+  type ScanSession,
+} from "./api/generated";
 
 import { errorMessage } from "./api/errors";
 import { ScanPanel } from "./ScanPanel";
+import { AnalyzerPanel } from "./AnalyzerPanel";
+import { HistoryDuplicatesPanel } from "./HistoryDuplicatesPanel";
 
 type State =
   | { status: "loading" }
@@ -20,6 +27,7 @@ const platforms: Record<Platform, string> = {
 export function App() {
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<State>({ status: "loading" });
+  const [scan, setScan] = useState<ScanSession | null>(null);
   useEffect(() => {
     let active = true;
     if (!isTauri()) {
@@ -120,7 +128,9 @@ export function App() {
             )}
           </div>
         </section>
-        <ScanPanel enabled={state.status === "ready"} />
+        <ScanPanel enabled={state.status === "ready"} onScanChange={setScan} />
+        <AnalyzerPanel enabled={state.status === "ready"} scan={scan} />
+        <HistoryDuplicatesPanel enabled={state.status === "ready"} />
       </main>
       <footer>
         macOS · Windows · Linux <span>Локально. Без облачного хранилища.</span>

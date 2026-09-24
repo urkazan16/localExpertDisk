@@ -94,6 +94,144 @@ fn nested_tree_counts_sizes_parent_relations_and_aggregates_survive_restart() {
     reopened.shutdown().unwrap();
 }
 
+#[test]
+fn completed_scan_exposes_bounded_folder_large_file_and_search_pages() {
+    let f = Fixture::new();
+    fs::create_dir(f.root.join("nested")).unwrap();
+    fs::write(f.root.join("small.txt"), [0; 2]).unwrap();
+    fs::write(f.root.join("nested/large.log"), [0; 20]).unwrap();
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    let session = service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    assert_eq!(wait_terminal(&rx).state, ScanState::Completed);
+
+    let root = service.root(&session.id).unwrap();
+    assert_eq!(root.aggregate_size, "22");
+    let children = service.children(&session.id, &root.id, None).unwrap();
+    assert_eq!(children.items.len(), 2);
+    let nested = children
+        .items
+        .iter()
+        .find(|entry| entry.name == "nested")
+        .unwrap();
+    assert_eq!(nested.aggregate_size, "20");
+    assert_eq!(
+        service
+            .children(&session.id, &nested.id, None)
+            .unwrap()
+            .items[0]
+            .name,
+        "large.log"
+    );
+    assert_eq!(
+        service.large_files(&session.id, None).unwrap().items[0].name,
+        "large.log"
+    );
+    assert_eq!(
+        service.search(&session.id, "small", None).unwrap().items[0].name,
+        "small.txt"
+    );
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn explorer_waits_for_a_terminal_scan() {
+    let f = Fixture::new();
+    let service = f.service();
+    let session = {
+        let mut storage = SqliteStorage::open(&f.db).unwrap();
+        storage.create_scan(&f.root).unwrap()
+    };
+    assert_eq!(
+        service.root(&session.id).unwrap_err().code,
+        ErrorCode::ScanNotReady
+    );
+    service.shutdown().unwrap();
+}
+
+struct RecordingLauncher {
+    calls: Mutex<Vec<(PathBuf, bool)>>,
+}
+impl EntryLauncher for RecordingLauncher {
+    fn launch(&self, path: &Path, reveal: bool) -> Result<(), AppError> {
+        self.calls.lock().unwrap().push((path.to_owned(), reveal));
+        Ok(())
+    }
+}
+
+#[test]
+fn system_actions_use_only_indexed_existing_entries() {
+    let f = Fixture::new();
+    let file = f.root.join("open-me.txt");
+    fs::write(&file, b"safe").unwrap();
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    let session = service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    wait_terminal(&rx);
+    let root = service.root(&session.id).unwrap();
+    let entry = service
+        .children(&session.id, &root.id, None)
+        .unwrap()
+        .items
+        .remove(0);
+    let launcher = RecordingLauncher {
+        calls: Mutex::new(vec![]),
+    };
+    service
+        .launch_entry_with(&session.id, &entry.id, true, &launcher)
+        .unwrap();
+    assert_eq!(
+        launcher.calls.lock().unwrap().as_slice(),
+        &[(file.canonicalize().unwrap(), true)]
+    );
+    fs::remove_file(f.root.join("open-me.txt")).unwrap();
+    assert_eq!(
+        service
+            .launch_entry_with(&session.id, &entry.id, false, &launcher)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidTarget
+    );
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn history_compares_persisted_scans_and_duplicate_candidates_are_size_groups() {
+    let f = Fixture::new();
+    fs::write(f.root.join("first"), [0; 8]).unwrap();
+    fs::write(f.root.join("second"), [1; 8]).unwrap();
+    let service = f.service();
+    let run = |service: &ScanService| {
+        let (tx, rx) = mpsc::channel();
+        let scan = service
+            .start(f.request(), move |update| tx.send(update).is_ok())
+            .unwrap();
+        (scan, wait_terminal(&rx))
+    };
+    let (older, _) = run(&service);
+    fs::write(f.root.join("third"), [2; 3]).unwrap();
+    let (newer, _) = run(&service);
+    let history = service.history(None).unwrap();
+    assert_eq!(history.items[0].id, newer.id);
+    assert_eq!(history.items[1].id, older.id);
+    assert_eq!(
+        service
+            .compare(&newer.id, &older.id)
+            .unwrap()
+            .logical_size_delta,
+        "3"
+    );
+    let groups = service.duplicate_candidates(None).unwrap();
+    assert_eq!(groups.items[0].size, "8");
+    assert_eq!(groups.items[0].files_count, "2");
+    assert_eq!(groups.items[0].reclaimable_size, "8");
+    service.shutdown().unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn symlink_loop_is_counted_without_following() {
