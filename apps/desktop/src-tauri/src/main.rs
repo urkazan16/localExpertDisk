@@ -1,58 +1,120 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use domain::{AppError, AppInfo, ErrorCode};
-use filesystem::LocalPlatform;
-use std::sync::Mutex;
-use storage::SqliteStorage;
-use tauri::Manager;
+use domain::{
+    AppError, AppInfo, ErrorCode, ScanIssuePage, ScanSession, StartScanRequest, VolumeInfo,
+};
+use filesystem::volumes::{LocalVolumes, VolumeProvider};
+use services::scans::ScanService;
+use tauri::{ipc::Channel, Manager};
 
-struct AppState(Result<Mutex<SqliteStorage>, AppError>);
+struct AppState(Result<ScanService, AppError>);
+impl AppState {
+    fn service(&self) -> Result<ScanService, AppError> {
+        self.0.clone()
+    }
+}
+fn internal() -> AppError {
+    AppError::new(ErrorCode::Internal)
+}
 
 #[tauri::command]
-fn get_app_info(state: tauri::State<'_, AppState>) -> Result<AppInfo, AppError> {
-    let storage = state.0.as_ref().map_err(Clone::clone)?;
-    let storage = storage.lock().map_err(|_| AppError {
-        code: ErrorCode::Internal,
-        user_message_key: "errors.internal".into(),
-        recoverable: false,
-    })?;
-    services::get_app_info(&*storage, &LocalPlatform)
+async fn get_app_info(state: tauri::State<'_, AppState>) -> Result<AppInfo, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.app_info())
+        .await
+        .map_err(|_| internal())?
 }
-
-fn initialize_storage(app: &tauri::App) -> Result<Mutex<SqliteStorage>, AppError> {
-    let unavailable = || AppError {
-        code: ErrorCode::StorageUnavailable,
-        user_message_key: "errors.storage_unavailable".into(),
-        recoverable: false,
-    };
+#[tauri::command]
+async fn get_volumes() -> Result<Vec<VolumeInfo>, AppError> {
+    tauri::async_runtime::spawn_blocking(|| LocalVolumes.volumes())
+        .await
+        .map_err(|_| internal())
+}
+#[tauri::command]
+async fn start_scan(
+    state: tauri::State<'_, AppState>,
+    request: StartScanRequest,
+    on_progress: Channel<ScanSession>,
+) -> Result<ScanSession, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        service.start(request, move |update| on_progress.send(update).is_ok())
+    })
+    .await
+    .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn cancel_scan(
+    state: tauri::State<'_, AppState>,
+    scan_id: String,
+) -> Result<ScanSession, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.cancel(&scan_id))
+        .await
+        .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn get_scan(
+    state: tauri::State<'_, AppState>,
+    scan_id: Option<String>,
+) -> Result<Option<ScanSession>, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.get_scan(scan_id.as_deref()))
+        .await
+        .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn get_scan_issues(
+    state: tauri::State<'_, AppState>,
+    scan_id: String,
+    after_id: Option<String>,
+) -> Result<ScanIssuePage, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.issues(&scan_id, after_id.as_deref()))
+        .await
+        .map_err(|_| internal())?
+}
+fn initialize_storage(app: &tauri::App) -> Result<ScanService, AppError> {
+    let unavailable = || AppError::new(ErrorCode::StorageUnavailable);
     let directory = app.path().app_data_dir().map_err(|_| unavailable())?;
     std::fs::create_dir_all(&directory).map_err(|_| unavailable())?;
-    SqliteStorage::open(&directory.join("index.db"))
-        .map(Mutex::new)
-        .map_err(|mut error| {
-            // Initialization is retried on restart, not by repeating the status query.
-            error.recoverable = false;
-            error
-        })
+    ScanService::open(&directory.join("index.db")).map_err(|mut error| {
+        error.recoverable = false;
+        error
+    })
 }
-
 fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder.invoke_handler(tauri::generate_handler![get_app_info])
+    builder.invoke_handler(tauri::generate_handler![
+        get_app_info,
+        get_volumes,
+        start_scan,
+        cancel_scan,
+        get_scan,
+        get_scan_issues
+    ])
 }
-
 fn main() {
     tracing_subscriber::fmt().json().with_target(false).init();
-    register_commands(tauri::Builder::default())
+    let app = register_commands(tauri::Builder::default())
         .setup(|app| {
             let storage = initialize_storage(app);
             if let Err(error) = &storage {
-                tracing::error!(component = "desktop", operation = "startup", code = ?error.code, "Storage initialization failed");
+                tracing::error!(component="desktop",operation="startup",code=?error.code,"Storage initialization failed");
             }
             app.manage(AppState(storage));
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("Desktop runtime failed");
+    app.run(|app,event| {
+        if matches!(event,tauri::RunEvent::ExitRequested { .. }) {
+            if let Ok(service) = &app.state::<AppState>().0 {
+                if let Err(error) = service.shutdown() {
+                    tracing::error!(component="desktop",operation="shutdown",code=?error.code,"Scan shutdown failed");
+                }
+            }
+        }
+    });
 }
 
 #[cfg(test)]
@@ -92,9 +154,9 @@ mod tests {
     #[test]
     fn ipc_command_returns_real_service_and_database_response() {
         let directory = tempfile::tempdir().unwrap();
-        let storage = SqliteStorage::open(&directory.path().join("ipc.db")).unwrap();
-        let response = invoke(AppState(Ok(Mutex::new(storage)))).unwrap();
-        assert_eq!(response.schema_version, 1);
+        let storage = ScanService::open(&directory.path().join("ipc.db")).unwrap();
+        let response = invoke(AppState(Ok(storage))).unwrap();
+        assert_eq!(response.schema_version, 2);
         assert_eq!(response.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(response.capabilities, Default::default());
     }

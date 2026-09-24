@@ -3,10 +3,13 @@ use domain::{AppError, ErrorCode};
 use rusqlite::{Connection, TransactionBehavior};
 use std::{path::Path, time::Duration};
 
-const MIGRATIONS: &[(&str, &str)] = &[(
-    "schema_migrations",
-    include_str!("../migrations/0001_schema_migrations.sql"),
-)];
+const MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "schema_migrations",
+        include_str!("../migrations/0001_schema_migrations.sql"),
+    ),
+    ("scans", include_str!("../migrations/0002_scans.sql")),
+];
 
 pub trait StorageStatus {
     fn schema_version(&self) -> Result<u32, AppError>;
@@ -122,7 +125,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.db");
         let db = SqliteStorage::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 1);
+        assert_eq!(db.schema_version().unwrap(), 2);
         db.connection
             .execute_batch(
                 "CREATE TABLE marker(value TEXT); INSERT INTO marker VALUES ('preserved');",
@@ -130,7 +133,7 @@ mod tests {
             .unwrap();
         drop(db);
         let db = SqliteStorage::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 1);
+        assert_eq!(db.schema_version().unwrap(), 2);
         let marker: String = db
             .connection
             .query_row("SELECT value FROM marker", [], |row| row.get(0))
@@ -158,20 +161,21 @@ mod tests {
         migrate(&mut connection, MIGRATIONS).unwrap();
         let migrations = [
             MIGRATIONS[0],
+            MIGRATIONS[1],
             ("broken", "CREATE TABLE partial(value TEXT); INVALID SQL;"),
         ];
         assert!(migrate(&mut connection, &migrations).is_err());
         let version: u32 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
         assert!(connection.prepare("SELECT * FROM partial").is_err());
         let count: u32 = connection
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(count, 2);
     }
 
     #[test]
@@ -187,3 +191,5 @@ mod tests {
         );
     }
 }
+
+pub mod scans;

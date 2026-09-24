@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getAppInfo, type AppInfo, type Platform } from "./api/generated";
 
+import { errorMessage } from "./api/errors";
+import { ScanPanel } from "./ScanPanel";
+
 type State =
   | { status: "loading" }
   | { status: "browser" }
@@ -13,30 +16,6 @@ const platforms: Record<Platform, string> = {
   linux: "Linux",
   unsupported: "Не поддерживается",
 };
-const errors: Record<string, string> = {
-  "errors.storage_unavailable":
-    "Не удалось открыть локальную базу. Проверьте доступ к папке приложения и перезапустите его.",
-  "errors.unsupported_schema":
-    "База создана более новой версией приложения. Обновите приложение, чтобы сохранить совместимость.",
-  "errors.invalid_schema":
-    "История миграций базы повреждена. Для продолжения потребуется восстановление базы.",
-  "errors.internal":
-    "Не удалось проверить состояние приложения. Перезапустите его.",
-};
-function errorMessage(error: unknown): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "user_message_key" in error &&
-    typeof error.user_message_key === "string"
-  ) {
-    return (
-      errors[error.user_message_key] ??
-      "Не удалось связаться с приложением. Повторите проверку."
-    );
-  }
-  return "Не удалось связаться с приложением. Повторите проверку.";
-}
 
 export function App() {
   const [attempt, setAttempt] = useState(0);
@@ -93,7 +72,7 @@ export function App() {
         <section className="panel" aria-labelledby="status-title">
           <div className="panel-heading">
             <h2 id="status-title">Состояние приложения</h2>
-            <span className="stage">Этап 0 · Foundation</span>
+            <span className="stage">Локальное подключение</span>
           </div>
           <div aria-live="polite">
             {state.status === "loading" && (
@@ -141,17 +120,7 @@ export function App() {
             )}
           </div>
         </section>
-        <section className="next" aria-labelledby="next-title">
-          <span className="number">01</span>
-          <div>
-            <h2 id="next-title">Следующий этап — сканирование</h2>
-            <p>
-              Выбор диска, обход каталогов, подсчёт размеров и отмена
-              сканирования появятся на следующем этапе. В этой сборке анализ
-              файлов ещё недоступен.
-            </p>
-          </div>
-        </section>
+        <ScanPanel enabled={state.status === "ready"} />
       </main>
       <footer>
         macOS · Windows · Linux <span>Локально. Без облачного хранилища.</span>

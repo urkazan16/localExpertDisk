@@ -11,4 +11,5 @@ dist/
 
 # Local project instructions and implementation plan
 AGENTS.md
-/IMPLEMENTATION_PLAN — детальный план реализации проекта.md
+/IMPLEMENTATION_PLAN*.md
+/docs/

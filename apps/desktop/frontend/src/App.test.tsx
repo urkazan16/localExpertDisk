@@ -4,6 +4,8 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { App } from "./App";
 import type { AppInfo } from "./api/generated";
 
+vi.mock("./ScanPanel", () => ({ ScanPanel: () => <div>Scanner</div> }));
+
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 const info: AppInfo = {
   version: "0.1.0",

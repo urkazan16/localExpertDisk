@@ -10,5 +10,10 @@ domain.workspace = true
 rusqlite.workspace = true
 tracing.workspace = true
 
+scanner.workspace = true
+analyzer.workspace = true
+filesystem.workspace = true
+serde_json.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true

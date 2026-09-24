@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/*", "tools/*", "apps/desktop/src-tauri"]
-default-members = ["crates/domain", "crates/filesystem", "crates/storage", "crates/services", "tools/contract-generator", "tools/fixture-generator"]
+default-members = ["crates/scanner", "crates/analyzer", "crates/domain", "crates/filesystem", "crates/storage", "crates/services", "tools/contract-generator", "tools/fixture-generator"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,8 @@ rust-version = "1.92"
 publish = false
 
 [workspace.dependencies]
+scanner = { path = "crates/scanner" }
+analyzer = { path = "crates/analyzer" }
 domain = { path = "crates/domain" }
 filesystem = { path = "crates/filesystem" }
 storage = { path = "crates/storage" }

@@ -1,8 +1,8 @@
 # Local Expert Disk
 
-Кроссплатформенный desktop-анализатор дискового пространства. Сейчас реализуется
-**Stage 0 — Foundation**: React → Tauri command → Rust service → SQLite → typed response.
-Сканирование и операции с файлами ещё не реализованы.
+Кроссплатформенный desktop-анализатор дискового пространства. Реализованы Foundation
+и первый инкремент **Stage 1 — Scanner**: выбор тома или абсолютного каталога,
+однопоточный обход, прогресс, отмена и сохранение результата в SQLite.
 
 ## Запуск
 
@@ -24,9 +24,17 @@ npm run desktop:dev
 
 Приложение создаёт только свою базу `index.db` в каталоге app-data идентификатора
 `local.expertdisk.desktop`. На macOS это
-`~/Library/Application Support/local.expertdisk.desktop/`. Пользовательские диски
-на этапе Foundation не сканируются. Ошибки SQLite не раскрывают пути в IPC и логах.
+`~/Library/Application Support/local.expertdisk.desktop/`. При сканировании читаются
+только имена и metadata: содержимое файлов не открывается, ссылки не обходятся,
+файлы не изменяются. Ошибки SQLite не раскрывают пути в IPC и логах.
 При несовместимой схеме приложение сохраняет базу и показывает ошибку.
+
+За раз выполняется одно сканирование. Отмена кооперативная: уже обработанные записи
+остаются в истории со статусом `cancelled`; зависший вызов filesystem ОС нельзя
+прервать принудительно. Результат `partial` означает, что часть объектов оказалась
+недоступна, исчезла во время обхода или была пропущена. Логический размер — сумма
+размеров файлов; физический размер и дедупликация hard links появятся в отдельных
+этапах. После аварийного завершения незаконченная сессия становится `interrupted`.
 
 ## Проверки
 
@@ -40,7 +48,7 @@ npm run lint
 npm run typecheck
 npm run format:check
 npm run build
-cargo build -p desktop --locked
+npm run desktop:build -- --debug --no-bundle
 ```
 
 После изменения Rust-моделей: `cargo generate-contracts`.
@@ -65,6 +73,7 @@ cargo run -p fixture-generator -- /tmp/local-expert-disk-example 100
 - [Фактическая архитектура](docs/architecture/ARCHITECTURE.md).
 - [Rust/Tauri и зависимости](docs/adr/0001-rust-tauri-foundation.md).
 - [Генерация IPC](docs/adr/0002-ipc-contracts.md).
+- [Первый scanner](docs/adr/0003-scanner-pipeline.md).
 - [Состояние этапов и ограничения](docs/roadmap/STAGES.md).
 
 SRS, перечисленный в исходном плане, не предоставлен. Нельзя считать требования

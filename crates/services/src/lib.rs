@@ -26,7 +26,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = SqliteStorage::open(&dir.path().join("test.db")).unwrap();
         let info = get_app_info(&storage, &LocalPlatform).unwrap();
-        assert_eq!(info.schema_version, 1);
+        assert_eq!(info.schema_version, 2);
         assert_eq!(info.capabilities, Default::default());
     }
 
@@ -50,3 +50,5 @@ mod tests {
         );
     }
 }
+
+pub mod scans;
