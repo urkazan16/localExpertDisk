@@ -1,0 +1,2 @@
+[alias]
+generate-contracts = "run --locked -p contract-generator --"

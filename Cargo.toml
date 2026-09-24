@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "tools/*", "apps/desktop/src-tauri"]
+default-members = ["crates/domain", "crates/filesystem", "crates/storage", "crates/services", "tools/contract-generator", "tools/fixture-generator"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+publish = false
+
+[workspace.dependencies]
+domain = { path = "crates/domain" }
+filesystem = { path = "crates/filesystem" }
+storage = { path = "crates/storage" }
+services = { path = "crates/services" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ts-rs = "12"
+rusqlite = { version = "0.32", features = ["bundled"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json"] }
+tempfile = "3"

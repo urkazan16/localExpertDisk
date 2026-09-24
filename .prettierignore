@@ -1,0 +1,11 @@
+target
+node_modules
+dist
+Cargo.lock
+apps/desktop/src-tauri/gen
+apps/desktop/frontend/src/api/generated.ts
+AGENTS.md
+backend/AGENTS.md
+frontend/AGENTS.md
+tests/AGENTS.md
+IMPLEMENTATION*
