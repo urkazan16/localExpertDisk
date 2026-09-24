@@ -4,6 +4,7 @@ import { AnalyzerPanel } from "./AnalyzerPanel";
 import {
   getChildren,
   getCategories,
+  getFilteredLargeFiles,
   getLargeFiles,
   getScanRoot,
   moveEntriesToTrash,
@@ -18,6 +19,7 @@ vi.mock("./api/generated", () => ({
   getChildren: vi.fn(),
   getCategories: vi.fn(),
   getFilesInCategory: vi.fn(),
+  getFilteredLargeFiles: vi.fn(),
   getLargeFiles: vi.fn(),
   getScanRoot: vi.fn(),
   moveEntryToTrash: vi.fn(),
@@ -56,6 +58,10 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(getScanRoot).mockResolvedValue(root);
   vi.mocked(getCategories).mockResolvedValue([]);
+  vi.mocked(getFilteredLargeFiles).mockResolvedValue({
+    items: [],
+    next_cursor: null,
+  });
   vi.mocked(getChildren).mockResolvedValue({
     items: [
       {
@@ -126,11 +132,18 @@ describe("Analyzer UI", () => {
     });
     render(<AnalyzerPanel enabled scan={scan} />);
     await screen.findByText("nested");
-    expect(getLargeFiles).not.toHaveBeenCalled();
+    expect(getFilteredLargeFiles).not.toHaveBeenCalled();
     fireEvent.click(
       screen.getByRole("button", { name: "Показать крупные файлы" }),
     );
-    await waitFor(() => expect(getLargeFiles).toHaveBeenCalledWith("7", null));
+    await waitFor(() =>
+      expect(getFilteredLargeFiles).toHaveBeenCalledWith(
+        "7",
+        "0",
+        null,
+        "size_desc",
+      ),
+    );
     fireEvent.change(screen.getByLabelText("Имя или часть имени"), {
       target: { value: "log" },
     });

@@ -3,6 +3,7 @@ import {
   getChildren,
   getCategories,
   getFilesInCategory,
+  getFilteredLargeFiles,
   getLargeFiles,
   getScanRoot,
   moveEntriesToTrash,
@@ -13,6 +14,7 @@ import {
   type EntryPage,
   type CategorySummary,
   type FileCategory,
+  type FileSort,
   type IndexedEntry,
   type ScanSession,
 } from "./api/generated";
@@ -141,6 +143,9 @@ export function AnalyzerPanel({
     null,
   );
   const [largeFiles, setLargeFiles] = useState<EntryPage | null>(null);
+  const [largeMinSize, setLargeMinSize] = useState("0");
+  const [largeCategory, setLargeCategory] = useState<FileCategory | "">("");
+  const [largeSort, setLargeSort] = useState<FileSort>("size_desc");
   const [search, setSearch] = useState<EntryPage | null>(null);
   const [searchText, setSearchText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -212,7 +217,16 @@ export function AnalyzerPanel({
     setLoading(true);
     setError(null);
     try {
-      setLargeFiles(await getLargeFiles(scan.id, after));
+      setLargeFiles(
+        after
+          ? await getLargeFiles(scan.id, after)
+          : await getFilteredLargeFiles(
+              scan.id,
+              largeMinSize,
+              largeCategory || null,
+              largeSort,
+            ),
+      );
     } catch (reason: unknown) {
       setError(errorMessage(reason));
     } finally {
@@ -409,6 +423,47 @@ export function AnalyzerPanel({
               >
                 Показать крупные файлы
               </button>
+            </div>
+            <div className="old-files-filter">
+              <label>
+                Минимум, байт{" "}
+                <input
+                  value={largeMinSize}
+                  inputMode="numeric"
+                  onChange={(event) =>
+                    setLargeMinSize(event.target.value.replace(/\D/g, ""))
+                  }
+                />
+              </label>
+              <label>
+                Категория{" "}
+                <select
+                  value={largeCategory}
+                  onChange={(event) =>
+                    setLargeCategory(event.target.value as FileCategory | "")
+                  }
+                >
+                  <option value="">Все</option>
+                  {Object.entries(categoryLabels).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Сортировка{" "}
+                <select
+                  value={largeSort}
+                  onChange={(event) =>
+                    setLargeSort(event.target.value as FileSort)
+                  }
+                >
+                  <option value="size_desc">Размер</option>
+                  <option value="modified_desc">Изменён</option>
+                  <option value="name_asc">Имя</option>
+                </select>
+              </label>
             </div>
             {largeFiles && (
               <>
