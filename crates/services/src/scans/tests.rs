@@ -232,6 +232,60 @@ fn history_compares_persisted_scans_and_duplicate_candidates_are_size_groups() {
     service.shutdown().unwrap();
 }
 
+#[test]
+fn duplicate_candidates_use_last_completed_scan_when_newer_scan_failed() {
+    let f = Fixture::new();
+    fs::write(f.root.join("first"), [0; 4]).unwrap();
+    fs::write(f.root.join("second"), [1; 4]).unwrap();
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    wait_terminal(&rx);
+    {
+        let mut storage = SqliteStorage::open(&f.db).unwrap();
+        let failed = storage.create_scan(&f.root).unwrap();
+        storage
+            .transition(
+                parse_id(&failed.id).unwrap(),
+                ScanState::Failed,
+                Some(&AppError::new(ErrorCode::Internal)),
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        service.duplicate_candidates(None).unwrap().items[0].size,
+        "4"
+    );
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn comparison_rejects_scans_of_different_roots() {
+    let f = Fixture::new();
+    let other = f.root.parent().unwrap().join("other");
+    fs::create_dir(&other).unwrap();
+    let service = f.service();
+    let run = |request: StartScanRequest| {
+        let (tx, rx) = mpsc::channel();
+        let scan = service
+            .start(request, move |update| tx.send(update).is_ok())
+            .unwrap();
+        wait_terminal(&rx);
+        scan
+    };
+    let first = run(f.request());
+    let second = run(StartScanRequest {
+        root_path: other.to_str().unwrap().into(),
+    });
+    assert_eq!(
+        service.compare(&second.id, &first.id).unwrap_err().code,
+        ErrorCode::IncompatibleScans
+    );
+    service.shutdown().unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn symlink_loop_is_counted_without_following() {

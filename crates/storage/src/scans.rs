@@ -159,6 +159,16 @@ impl SqliteStorage {
             .optional()
             .map_err(storage_error)
     }
+    fn latest_queryable_scan(&self) -> Result<Option<ScanSession>, AppError> {
+        self.connection
+            .query_row(
+                &format!("{SELECT_SESSION} WHERE state IN ('completed','partial','cancelled') ORDER BY id DESC LIMIT 1"),
+                [],
+                read_session,
+            )
+            .optional()
+            .map_err(storage_error)
+    }
     pub fn scan_history(&self, after: i64) -> Result<ScanHistoryPage, AppError> {
         let mut statement = self
             .connection
@@ -185,6 +195,9 @@ impl SqliteStorage {
     pub fn compare_scans(&self, newer: i64, older: i64) -> Result<ScanComparison, AppError> {
         let newer = self.get_scan(newer)?;
         let older = self.get_scan(older)?;
+        if newer.root_path != older.root_path {
+            return Err(AppError::new(ErrorCode::IncompatibleScans));
+        }
         let delta = |a: &str, b: &str| -> Result<String, AppError> {
             Ok((a.parse::<i64>().map_err(|_| internal())?
                 - b.parse::<i64>().map_err(|_| internal())?)
@@ -492,13 +505,12 @@ impl SqliteStorage {
         &self,
         after_size: Option<i64>,
     ) -> Result<DuplicateGroupPage, AppError> {
-        let Some(scan) = self.latest_scan()? else {
+        let Some(scan) = self.latest_queryable_scan()? else {
             return Ok(DuplicateGroupPage {
                 items: vec![],
                 next_cursor: None,
             });
         };
-        self.ensure_queryable(parse_id(&scan.id)?)?;
         let after = after_size.unwrap_or(i64::MAX);
         let mut statement = self.connection.prepare("SELECT logical_size,COUNT(*) FROM entries WHERE scan_id=?1 AND kind='file' AND logical_size<?2 GROUP BY logical_size HAVING COUNT(*)>1 ORDER BY logical_size DESC LIMIT 51").map_err(storage_error)?;
         let mut rows = statement

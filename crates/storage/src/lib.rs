@@ -198,6 +198,20 @@ mod tests {
             ErrorCode::InvalidSchema
         );
     }
+
+    #[test]
+    fn corrupted_database_is_rejected_without_creating_schema_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("corrupted.db");
+        std::fs::write(&path, b"not a sqlite database").unwrap();
+        let error = match SqliteStorage::open(&path) {
+            Ok(_) => panic!("corrupted database must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, ErrorCode::StorageUnavailable);
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(bytes, b"not a sqlite database");
+    }
 }
 
 pub mod scans;

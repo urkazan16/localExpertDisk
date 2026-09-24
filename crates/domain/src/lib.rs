@@ -16,6 +16,8 @@ pub enum ErrorCode {
     SizeOverflow,
     ScanNotReady,
     LaunchFailed,
+    PermissionDenied,
+    IncompatibleScans,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -97,6 +99,8 @@ impl AppError {
             ErrorCode::SizeOverflow => "size_overflow",
             ErrorCode::ScanNotReady => "scan_not_ready",
             ErrorCode::LaunchFailed => "launch_failed",
+            ErrorCode::PermissionDenied => "permission_denied",
+            ErrorCode::IncompatibleScans => "incompatible_scans",
         };
         Self {
             code,

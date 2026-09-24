@@ -20,6 +20,10 @@ const messages: Record<string, string> = {
     "Результаты станут доступны после завершения или отмены сканирования.",
   "errors.launch_failed":
     "Не удалось открыть объект в системе. Повторите попытку.",
+  "errors.permission_denied":
+    "Нет доступа к выбранному каталогу. Выберите другой каталог или предоставьте приложению доступ.",
+  "errors.incompatible_scans":
+    "Для сравнения выберите сканы одного и того же каталога.",
 };
 export function errorMessage(error: unknown): string {
   if (

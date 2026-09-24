@@ -90,7 +90,13 @@ pub fn scan(
         match listing {
             Err(error) => {
                 if task.is_root {
-                    return Err(AppError::new(ErrorCode::InvalidTarget));
+                    return Err(AppError::new(
+                        if error.kind() == io::ErrorKind::PermissionDenied {
+                            ErrorCode::PermissionDenied
+                        } else {
+                            ErrorCode::InvalidTarget
+                        },
+                    ));
                 }
                 issues.push(issue(&task.path, "read_directory", error.kind()));
                 delta.errors += 1;
@@ -264,5 +270,80 @@ mod tests {
             ScanState::Cancelled
         );
         assert_eq!(sink.writes, 0);
+    }
+
+    struct FailingSink;
+    impl ScanSink for FailingSink {
+        fn next_directory(&mut self) -> Result<Option<DirectoryTask>, AppError> {
+            Ok(Some(DirectoryTask {
+                id: 1,
+                path: PathBuf::from("root"),
+                identity: None,
+                is_root: true,
+            }))
+        }
+        fn write_batch(
+            &mut self,
+            _: i64,
+            _: &[EntryDraft],
+            _: &[ScanIssue],
+            _: Totals,
+        ) -> Result<(), AppError> {
+            Err(AppError::new(ErrorCode::StorageUnavailable))
+        }
+        fn finish_directory(&mut self, _: i64) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+    #[test]
+    fn storage_write_failure_stops_scan_without_reporting_completion() {
+        assert_eq!(
+            scan(
+                &Synthetic,
+                &mut FailingSink,
+                &AtomicBool::new(false),
+                Path::new("excluded"),
+                || {}
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::StorageUnavailable
+        );
+    }
+
+    struct DeniedRoot;
+    impl FileSystemProvider for DeniedRoot {
+        fn metadata(&self, _: &Path) -> io::Result<EntryMetadata> {
+            Ok(EntryMetadata {
+                kind: EntryKind::Directory,
+                logical_size: 0,
+                modified_at_ms: None,
+                identity: None,
+            })
+        }
+        fn read_directory(&self, _: &Path) -> io::Result<DirectoryEntries> {
+            Err(io::ErrorKind::PermissionDenied.into())
+        }
+    }
+    #[test]
+    fn inaccessible_root_preserves_the_permission_error() {
+        let mut sink = Sink {
+            queued: true,
+            total: Totals::default(),
+            max_batch: 0,
+            writes: 0,
+        };
+        assert_eq!(
+            scan(
+                &DeniedRoot,
+                &mut sink,
+                &AtomicBool::new(false),
+                Path::new("excluded"),
+                || {}
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::PermissionDenied
+        );
     }
 }
