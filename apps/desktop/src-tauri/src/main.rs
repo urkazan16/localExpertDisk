@@ -193,6 +193,16 @@ async fn compare_scans(
         .map_err(|_| internal())?
 }
 #[tauri::command]
+async fn delete_scan_history(
+    state: tauri::State<'_, AppState>,
+    scan_id: String,
+) -> Result<(), AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.delete_history(&scan_id))
+        .await
+        .map_err(|_| internal())?
+}
+#[tauri::command]
 async fn get_duplicate_candidates(
     state: tauri::State<'_, AppState>,
     after_size: Option<String>,
@@ -231,6 +241,7 @@ fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         move_entry_to_trash,
         get_scan_history,
         compare_scans,
+        delete_scan_history,
         get_duplicate_candidates
     ])
 }
@@ -297,7 +308,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let storage = ScanService::open(&directory.path().join("ipc.db")).unwrap();
         let response = invoke(AppState(Ok(storage))).unwrap();
-        assert_eq!(response.schema_version, 4);
+        assert_eq!(response.schema_version, 5);
         assert_eq!(response.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(
             response.capabilities,

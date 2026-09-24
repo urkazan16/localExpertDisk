@@ -128,6 +128,9 @@ impl ScanService {
     pub fn compare(&self, newer: &str, older: &str) -> Result<ScanComparison, AppError> {
         guard(&self.shared.storage)?.compare_scans(parse_id(newer)?, parse_id(older)?)
     }
+    pub fn delete_history(&self, scan_id: &str) -> Result<(), AppError> {
+        guard(&self.shared.storage)?.delete_scan_history(parse_id(scan_id)?)
+    }
     pub fn duplicate_candidates(
         &self,
         after: Option<&str>,

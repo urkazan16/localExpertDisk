@@ -378,17 +378,23 @@ fn history_compares_persisted_scans_and_duplicate_candidates_are_size_groups() {
     let history = service.history(None).unwrap();
     assert_eq!(history.items[0].id, newer.id);
     assert_eq!(history.items[1].id, older.id);
-    assert_eq!(
-        service
-            .compare(&newer.id, &older.id)
-            .unwrap()
-            .logical_size_delta,
-        "3"
-    );
+    let comparison = service.compare(&newer.id, &older.id).unwrap();
+    assert_eq!(comparison.logical_size_delta, "3");
+    assert_eq!(comparison.added_files_count, "1");
+    assert_eq!(comparison.removed_files_count, "0");
+    assert_eq!(comparison.modified_files_count, "0");
+    assert_eq!(comparison.moved_files_count, "0");
     let groups = service.duplicate_candidates(None).unwrap();
     assert_eq!(groups.items[0].size, "8");
     assert_eq!(groups.items[0].files_count, "2");
     assert_eq!(groups.items[0].reclaimable_size, "8");
+    service.delete_history(&older.id).unwrap();
+    assert!(f.root.join("first").exists());
+    assert_eq!(service.history(None).unwrap().items.len(), 1);
+    assert_eq!(
+        service.get_scan(Some(&older.id)).unwrap_err().code,
+        ErrorCode::ScanNotFound
+    );
     service.shutdown().unwrap();
 }
 

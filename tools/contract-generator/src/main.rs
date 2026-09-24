@@ -92,6 +92,9 @@ export function getScanHistory(afterId: string | null = null): Promise<ScanHisto
 export function compareScans(newerScanId: string, olderScanId: string): Promise<ScanComparison> {
   return invoke<ScanComparison>('compare_scans', { newerScanId, olderScanId });
 }
+export function deleteScanHistory(scanId: string): Promise<void> {
+  return invoke<void>('delete_scan_history', { scanId });
+}
 export function getDuplicateCandidates(afterSize: string | null = null): Promise<DuplicateGroupPage> {
   return invoke<DuplicateGroupPage>('get_duplicate_candidates', { afterSize });
 }

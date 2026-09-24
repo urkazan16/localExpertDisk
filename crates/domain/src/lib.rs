@@ -252,6 +252,10 @@ pub struct ScanComparison {
     pub files_delta: String,
     pub directories_delta: String,
     pub logical_size_delta: String,
+    pub added_files_count: String,
+    pub removed_files_count: String,
+    pub modified_files_count: String,
+    pub moved_files_count: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

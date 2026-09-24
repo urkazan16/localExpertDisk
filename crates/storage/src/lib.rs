@@ -17,6 +17,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "entry_timestamps",
         include_str!("../migrations/0004_entry_timestamps.sql"),
     ),
+    (
+        "history_comparison",
+        include_str!("../migrations/0005_history_comparison.sql"),
+    ),
 ];
 
 pub trait StorageStatus {
@@ -133,7 +137,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.db");
         let db = SqliteStorage::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 4);
+        assert_eq!(db.schema_version().unwrap(), 5);
         db.connection
             .execute_batch(
                 "CREATE TABLE marker(value TEXT); INSERT INTO marker VALUES ('preserved');",
@@ -141,7 +145,7 @@ mod tests {
             .unwrap();
         drop(db);
         let db = SqliteStorage::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 4);
+        assert_eq!(db.schema_version().unwrap(), 5);
         let marker: String = db
             .connection
             .query_row("SELECT value FROM marker", [], |row| row.get(0))
@@ -176,14 +180,14 @@ mod tests {
         let version: u32 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         assert!(connection.prepare("SELECT * FROM partial").is_err());
         let count: u32 = connection
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 4);
+        assert_eq!(count, 5);
     }
 
     #[test]

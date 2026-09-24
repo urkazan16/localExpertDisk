@@ -217,6 +217,8 @@ impl SqliteStorage {
     pub fn compare_scans(&self, newer: i64, older: i64) -> Result<ScanComparison, AppError> {
         let newer = self.get_scan(newer)?;
         let older = self.get_scan(older)?;
+        self.ensure_queryable(parse_id(&newer.id)?)?;
+        self.ensure_queryable(parse_id(&older.id)?)?;
         if newer.root_path != older.root_path {
             return Err(AppError::new(ErrorCode::IncompatibleScans));
         }
@@ -225,13 +227,63 @@ impl SqliteStorage {
                 - b.parse::<i64>().map_err(|_| internal())?)
             .to_string())
         };
+        let counts: (i64, i64, i64, i64) = self.connection.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM entries n WHERE n.scan_id=?1 AND n.parent_id IS NOT NULL AND n.kind='file' AND NOT EXISTS (SELECT 1 FROM entries o WHERE o.scan_id=?2 AND o.kind='file' AND ((n.identity IS NOT NULL AND n.identity=o.identity) OR (n.identity IS NULL AND o.identity IS NULL AND n.path=o.path)))),
+                (SELECT COUNT(*) FROM entries o WHERE o.scan_id=?2 AND o.parent_id IS NOT NULL AND o.kind='file' AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.scan_id=?1 AND n.kind='file' AND ((n.identity IS NOT NULL AND n.identity=o.identity) OR (n.identity IS NULL AND o.identity IS NULL AND n.path=o.path)))),
+                (SELECT COUNT(*) FROM entries n JOIN entries o ON o.scan_id=?2 AND o.kind='file' AND ((n.identity IS NOT NULL AND n.identity=o.identity) OR (n.identity IS NULL AND o.identity IS NULL AND n.path=o.path)) WHERE n.scan_id=?1 AND n.parent_id IS NOT NULL AND n.kind='file' AND (n.logical_size<>o.logical_size OR n.modified_at_ms IS NOT o.modified_at_ms)),
+                (SELECT COUNT(*) FROM entries n JOIN entries o ON o.scan_id=?2 AND n.identity IS NOT NULL AND n.identity=o.identity WHERE n.scan_id=?1 AND n.parent_id IS NOT NULL AND n.kind='file' AND n.path<>o.path)",
+            params![parse_id(&newer.id)?, parse_id(&older.id)?],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).map_err(storage_error)?;
         Ok(ScanComparison {
             newer_scan_id: newer.id,
             older_scan_id: older.id,
             files_delta: delta(&newer.files_count, &older.files_count)?,
             directories_delta: delta(&newer.directories_count, &older.directories_count)?,
             logical_size_delta: delta(&newer.logical_size, &older.logical_size)?,
+            added_files_count: counts.0.to_string(),
+            removed_files_count: counts.1.to_string(),
+            modified_files_count: counts.2.to_string(),
+            moved_files_count: counts.3.to_string(),
         })
+    }
+    pub fn delete_scan_history(&mut self, scan_id: i64) -> Result<(), AppError> {
+        self.ensure_queryable(scan_id)?;
+        let tx = self.connection.transaction().map_err(storage_error)?;
+        let mut statement = tx.prepare(
+            "WITH RECURSIVE subtree(id,depth) AS (
+                SELECT id,0 FROM entries WHERE scan_id=?1 AND parent_id IS NULL
+                UNION ALL SELECT e.id,s.depth+1 FROM entries e JOIN subtree s ON e.parent_id=s.id WHERE e.scan_id=?1
+            ) SELECT id,depth FROM subtree",
+        ).map_err(storage_error)?;
+        let mut entries = statement
+            .query_map([scan_id], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(storage_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(storage_error)?;
+        drop(statement);
+        entries.sort_by_key(|(_, depth)| std::cmp::Reverse(*depth));
+        for (entry_id, _) in &entries {
+            tx.execute("DELETE FROM directory_queue WHERE entry_id=?1", [entry_id])
+                .map_err(storage_error)?;
+            tx.execute(
+                "DELETE FROM directory_aggregates WHERE entry_id=?1",
+                [entry_id],
+            )
+            .map_err(storage_error)?;
+        }
+        for (entry_id, _) in entries {
+            tx.execute("DELETE FROM entries WHERE id=?1", [entry_id])
+                .map_err(storage_error)?;
+        }
+        tx.execute("DELETE FROM scan_errors WHERE scan_id=?1", [scan_id])
+            .map_err(storage_error)?;
+        tx.execute("DELETE FROM scan_sessions WHERE id=?1", [scan_id])
+            .map_err(storage_error)?;
+        tx.commit().map_err(storage_error)
     }
     pub fn transition(
         &mut self,
