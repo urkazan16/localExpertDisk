@@ -5,6 +5,7 @@ import {
   getChildren,
   getLargeFiles,
   getScanRoot,
+  moveEntriesToTrash,
   moveEntryToTrash,
   openEntry,
   revealEntry,
@@ -17,6 +18,7 @@ vi.mock("./api/generated", () => ({
   getLargeFiles: vi.fn(),
   getScanRoot: vi.fn(),
   moveEntryToTrash: vi.fn(),
+  moveEntriesToTrash: vi.fn(),
   searchEntries: vi.fn(),
   openEntry: vi.fn(),
   revealEntry: vi.fn(),
@@ -131,5 +133,22 @@ describe("Analyzer UI", () => {
       expect(moveEntryToTrash).toHaveBeenCalledWith("7", "9"),
     );
     expect(getChildren).toHaveBeenCalledTimes(2);
+  });
+
+  it("confirms and sends selected entries as one batch", async () => {
+    vi.mocked(moveEntriesToTrash).mockResolvedValue({
+      moved_entry_ids: ["9"],
+      failed_entry_ids: [],
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<AnalyzerPanel enabled scan={scan} trash />);
+    await screen.findByText("nested");
+    fireEvent.click(screen.getByLabelText("Выбрать nested"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Переместить в корзину" }),
+    );
+    await waitFor(() =>
+      expect(moveEntriesToTrash).toHaveBeenCalledWith("7", ["9"]),
+    );
   });
 });

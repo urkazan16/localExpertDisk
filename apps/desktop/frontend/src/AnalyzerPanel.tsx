@@ -3,6 +3,7 @@ import {
   getChildren,
   getLargeFiles,
   getScanRoot,
+  moveEntriesToTrash,
   moveEntryToTrash,
   openEntry,
   revealEntry,
@@ -27,17 +28,29 @@ function EntryRows({
   onDirectory,
   onAction,
   onTrash,
+  selected,
+  onToggle,
 }: {
   items: IndexedEntry[];
   onDirectory?: (entry: IndexedEntry) => void;
   onAction?: (entry: IndexedEntry, action: "open" | "reveal") => void;
   onTrash?: (entry: IndexedEntry) => void;
+  selected?: Set<string>;
+  onToggle?: (entry: IndexedEntry) => void;
 }) {
   if (items.length === 0) return <p className="hint">Нет объектов.</p>;
   return (
     <ul className="entry-list" aria-label="Содержимое каталога">
       {items.map((entry) => (
         <li key={entry.id}>
+          {onToggle && (
+            <input
+              aria-label={`Выбрать ${entry.name || entry.path}`}
+              type="checkbox"
+              checked={selected?.has(entry.id) ?? false}
+              onChange={() => onToggle(entry)}
+            />
+          )}
           <div>
             <strong>{entry.name || entry.path}</strong>
             <span>{kindLabels[entry.kind]}</span>
@@ -95,6 +108,7 @@ export function AnalyzerPanel({
   const [searchText, setSearchText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<IndexedEntry[]>([]);
   const version = useRef(0);
   const usable = Boolean(enabled && scan && readableStates.has(scan.state));
 
@@ -107,6 +121,7 @@ export function AnalyzerPanel({
     setLargeFiles(null);
     setSearch(null);
     setError(null);
+    setSelected([]);
     if (!usable || !scan) return;
     setLoading(true);
     getScanRoot(scan.id)
@@ -198,6 +213,41 @@ export function AnalyzerPanel({
     }
   }
 
+  function toggleSelection(entry: IndexedEntry) {
+    setSelected((items) =>
+      items.some((item) => item.id === entry.id)
+        ? items.filter((item) => item.id !== entry.id)
+        : [...items, entry],
+    );
+  }
+
+  async function trashSelected() {
+    if (!scan || selected.length === 0) return;
+    if (!window.confirm(`Переместить в корзину ${selected.length} объектов?`))
+      return;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await moveEntriesToTrash(
+        scan.id,
+        selected.map((entry) => entry.id),
+      );
+      setSelected([]);
+      if (result.failed_entry_ids.length) {
+        setError(
+          `Не удалось переместить ${result.failed_entry_ids.length} объектов.`,
+        );
+      }
+      if (directory) await showDirectory(directory);
+      setLargeFiles(null);
+      setSearch(null);
+    } catch (reason: unknown) {
+      setError(errorMessage(reason));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   if (!scan || !isTerminalCandidate(scan)) return null;
   return (
     <section className="panel analyzer" aria-labelledby="analysis-title">
@@ -235,6 +285,8 @@ export function AnalyzerPanel({
             </div>
             <EntryRows
               items={children.items}
+              selected={new Set(selected.map((entry) => entry.id))}
+              onToggle={toggleSelection}
               onDirectory={(entry) => {
                 setTrail((items) => [...items, directory]);
                 void showDirectory(entry);
@@ -242,6 +294,26 @@ export function AnalyzerPanel({
               onAction={(entry, action) => void actOnEntry(entry, action)}
               onTrash={trash ? (entry) => void trashEntry(entry) : undefined}
             />
+            {trash && selected.length > 0 && (
+              <div className="selection-bar">
+                Выбрано: {selected.length} ·{" "}
+                {formatBytes(
+                  selected
+                    .reduce(
+                      (total, entry) => total + BigInt(entry.aggregate_size),
+                      0n,
+                    )
+                    .toString(),
+                )}
+                <button
+                  className="secondary danger"
+                  disabled={loading}
+                  onClick={() => void trashSelected()}
+                >
+                  Переместить в корзину
+                </button>
+              </div>
+            )}
             {children.next_cursor && (
               <button
                 className="secondary"
