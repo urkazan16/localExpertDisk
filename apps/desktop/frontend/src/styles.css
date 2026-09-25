@@ -269,15 +269,114 @@ progress {
 }
 .history-row {
   align-items: center;
+  border-radius: 10px;
   display: flex;
   gap: 12px;
   justify-content: space-between;
+  padding: 10px;
+}
+.history-row.active {
+  background: #edf3e8;
+  box-shadow: inset 3px 0 #486f4d;
+}
+.history-choice {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+}
+.active-scan-badge {
+  background: #486f4d;
+  border-radius: 999px;
+  color: white;
+  font-size: 11px;
+  margin-left: 8px;
+  padding: 3px 7px;
 }
 .history-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
+}
+.retention-controls,
+.retention-controls label {
+  align-items: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.retention-controls label {
+  align-items: flex-start;
+  color: #536356;
+  flex-direction: column;
+  font-size: 12px;
+}
+.comparison-details {
+  background: #f4f5ee;
+  border-radius: 10px;
+  margin-top: 14px;
+  padding: 14px;
+}
+.comparison-details details {
+  border-top: 1px solid #d6dcd0;
+  padding: 10px 0;
+}
+.comparison-details summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.comparison-files {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.comparison-files li {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  overflow-wrap: anywhere;
+  padding: 6px 0;
+}
+.duplicate-groups {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0;
+}
+.duplicate-group {
+  border: 1px solid #d6dcd0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+button.duplicate-group-toggle {
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+  width: 100%;
+}
+.duplicate-files {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+.duplicate-files label {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.duplicate-delete-actions {
+  align-items: center;
+  background: #f8f0df;
+  border-radius: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px;
+}
+.duplicate-delete-actions p {
+  flex-basis: 100%;
+  margin: 0;
 }
 .entry-list {
   list-style: none;

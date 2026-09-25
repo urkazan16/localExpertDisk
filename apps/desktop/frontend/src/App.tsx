@@ -138,6 +138,8 @@ export function App() {
         <OldFilesPanel enabled={state.status === "ready"} scan={scan} />
         <HistoryDuplicatesPanel
           enabled={state.status === "ready"}
+          activeScanId={scan?.id}
+          trash={state.status === "ready" && state.info.capabilities.trash}
           onOpenScan={setScan}
         />
       </main>

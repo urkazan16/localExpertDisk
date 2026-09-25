@@ -48,9 +48,14 @@ export type OldFile = { entry: IndexedEntry, timestamp_ms: string, };
 export type OldFileCriterion = "modified" | "created" | "accessed";
 export type OldFilePage = { items: Array<OldFile>, next_cursor: string | null, };
 export type ScanHistoryPage = { items: Array<ScanSession>, next_cursor: string | null, };
-export type ScanComparison = { newer_scan_id: string, older_scan_id: string, files_delta: string, directories_delta: string, logical_size_delta: string, added_files_count: string, removed_files_count: string, modified_files_count: string, moved_files_count: string, };
-export type DuplicateGroup = { size: string, files_count: string, reclaimable_size: string, };
-export type DuplicateGroupPage = { items: Array<DuplicateGroup>, next_cursor: string | null, };
+export type ScanComparisonFile = { path: string, logical_size: string, previous_logical_size: string | null, };
+export type ScanComparison = { newer_scan_id: string, older_scan_id: string, files_delta: string, directories_delta: string, logical_size_delta: string, added_files_count: string, removed_files_count: string, modified_files_count: string, moved_files_count: string, added_files: Array<ScanComparisonFile>, removed_files: Array<ScanComparisonFile>, modified_files: Array<ScanComparisonFile>, details_limit: string, };
+export type HistoryCleanupResult = { deleted_scan_ids: Array<string>, };
+export type DuplicateGroup = { content_hash: string, size: string, files_count: string, reclaimable_size: string, };
+export type DuplicateGroupPage = { scan_id: string | null, items: Array<DuplicateGroup>, next_cursor: string | null, };
+export type DuplicateFilePage = { items: Array<IndexedEntry>, next_cursor: string | null, };
+export type DuplicateDeleteFailure = { entry_id: string, code: ErrorCode, };
+export type DuplicateDeleteResult = { moved_entry_ids: Array<string>, failures: Array<DuplicateDeleteFailure>, };
 
 export function getAppInfo(): Promise<AppInfo> {
   return invoke<AppInfo>('get_app_info');
@@ -121,6 +126,9 @@ export function compareScans(newerScanId: string, olderScanId: string): Promise<
 export function deleteScanHistory(scanId: string): Promise<void> {
   return invoke<void>('delete_scan_history', { scanId });
 }
+export function cleanupScanHistory(keepLatest: number, protectedScanId: string | null = null): Promise<HistoryCleanupResult> {
+  return invoke<HistoryCleanupResult>('cleanup_scan_history', { keepLatest, protectedScanId });
+}
 export function getDuplicateCandidates(afterSize: string | null = null): Promise<DuplicateGroupPage> {
   return invoke<DuplicateGroupPage>('get_duplicate_candidates', { afterSize });
 }
@@ -129,4 +137,10 @@ export function confirmDuplicates(): Promise<DuplicateGroupPage> {
 }
 export function getConfirmedDuplicates(afterId: string | null = null): Promise<DuplicateGroupPage> {
   return invoke<DuplicateGroupPage>('get_confirmed_duplicates', { afterId });
+}
+export function getDuplicateFiles(scanId: string, contentHash: string, afterId: string | null = null): Promise<DuplicateFilePage> {
+  return invoke<DuplicateFilePage>('get_duplicate_files', { scanId, contentHash, afterId });
+}
+export function deleteDuplicateEntries(scanId: string, entryIds: string[]): Promise<DuplicateDeleteResult> {
+  return invoke<DuplicateDeleteResult>('delete_duplicate_entries', { scanId, entryIds });
 }

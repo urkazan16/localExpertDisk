@@ -2,9 +2,9 @@
 
 use domain::{
     AppError, AppInfo, BatchOperationResult, CategorySummary, DirectoryMap, DirectoryMapMetric,
-    DuplicateGroupPage, EntryPage, ErrorCode, FileCategory, FileSort, IndexedEntry,
-    OldFileCriterion, OldFilePage, ScanComparison, ScanHistoryPage, ScanIssuePage, ScanSession,
-    StartScanRequest, VolumeInfo,
+    DuplicateDeleteResult, DuplicateFilePage, DuplicateGroupPage, EntryPage, ErrorCode,
+    FileCategory, FileSort, HistoryCleanupResult, IndexedEntry, OldFileCriterion, OldFilePage,
+    ScanComparison, ScanHistoryPage, ScanIssuePage, ScanSession, StartScanRequest, VolumeInfo,
 };
 use filesystem::volumes::{LocalVolumes, VolumeProvider};
 use services::scans::ScanService;
@@ -282,6 +282,19 @@ async fn delete_scan_history(
         .map_err(|_| internal())?
 }
 #[tauri::command]
+async fn cleanup_scan_history(
+    state: tauri::State<'_, AppState>,
+    keep_latest: u16,
+    protected_scan_id: Option<String>,
+) -> Result<HistoryCleanupResult, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        service.cleanup_history(keep_latest, protected_scan_id.as_deref())
+    })
+    .await
+    .map_err(|_| internal())?
+}
+#[tauri::command]
 async fn get_duplicate_candidates(
     state: tauri::State<'_, AppState>,
     after_size: Option<String>,
@@ -311,6 +324,33 @@ async fn get_confirmed_duplicates(
     tauri::async_runtime::spawn_blocking(move || service.confirmed_duplicates(after_id.as_deref()))
         .await
         .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn get_duplicate_files(
+    state: tauri::State<'_, AppState>,
+    scan_id: String,
+    content_hash: String,
+    after_id: Option<String>,
+) -> Result<DuplicateFilePage, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        service.duplicate_files(&scan_id, &content_hash, after_id.as_deref())
+    })
+    .await
+    .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn delete_duplicate_entries(
+    state: tauri::State<'_, AppState>,
+    scan_id: String,
+    entry_ids: Vec<String>,
+) -> Result<DuplicateDeleteResult, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        service.delete_duplicate_entries(&scan_id, &entry_ids)
+    })
+    .await
+    .map_err(|_| internal())?
 }
 fn initialize_storage(app: &tauri::App) -> Result<ScanService, AppError> {
     let unavailable = || AppError::new(ErrorCode::StorageUnavailable);
@@ -345,9 +385,12 @@ fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         get_scan_history,
         compare_scans,
         delete_scan_history,
+        cleanup_scan_history,
         get_duplicate_candidates,
         confirm_duplicates,
-        get_confirmed_duplicates
+        get_confirmed_duplicates,
+        get_duplicate_files,
+        delete_duplicate_entries
     ])
 }
 fn main() {
@@ -413,7 +456,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let storage = ScanService::open(&directory.path().join("ipc.db")).unwrap();
         let response = invoke(AppState(Ok(storage))).unwrap();
-        assert_eq!(response.schema_version, 11);
+        assert_eq!(response.schema_version, 12);
         assert_eq!(response.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(
             response.capabilities,

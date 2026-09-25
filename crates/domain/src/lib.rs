@@ -345,10 +345,27 @@ pub struct ScanComparison {
     pub removed_files_count: String,
     pub modified_files_count: String,
     pub moved_files_count: String,
+    pub added_files: Vec<ScanComparisonFile>,
+    pub removed_files: Vec<ScanComparisonFile>,
+    pub modified_files: Vec<ScanComparisonFile>,
+    pub details_limit: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct ScanComparisonFile {
+    pub path: String,
+    pub logical_size: String,
+    pub previous_logical_size: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct HistoryCleanupResult {
+    pub deleted_scan_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct DuplicateGroup {
+    pub content_hash: String,
     pub size: String,
     pub files_count: String,
     pub reclaimable_size: String,
@@ -356,8 +373,27 @@ pub struct DuplicateGroup {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct DuplicateGroupPage {
+    pub scan_id: Option<String>,
     pub items: Vec<DuplicateGroup>,
     pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct DuplicateFilePage {
+    pub items: Vec<IndexedEntry>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct DuplicateDeleteFailure {
+    pub entry_id: String,
+    pub code: ErrorCode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct DuplicateDeleteResult {
+    pub moved_entry_ids: Vec<String>,
+    pub failures: Vec<DuplicateDeleteFailure>,
 }
 
 #[cfg(test)]

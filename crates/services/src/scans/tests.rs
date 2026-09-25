@@ -672,6 +672,10 @@ fn history_compares_persisted_scans_and_duplicate_candidates_are_size_groups() {
     assert_eq!(comparison.removed_files_count, "0");
     assert_eq!(comparison.modified_files_count, "0");
     assert_eq!(comparison.moved_files_count, "0");
+    assert_eq!(comparison.added_files.len(), 1);
+    assert!(comparison.added_files[0].path.ends_with("third"));
+    assert!(comparison.removed_files.is_empty());
+    assert!(comparison.modified_files.is_empty());
     let groups = service.duplicate_candidates(None).unwrap();
     assert_eq!(groups.items[0].size, "8");
     assert_eq!(groups.items[0].files_count, "2");
@@ -683,6 +687,32 @@ fn history_compares_persisted_scans_and_duplicate_candidates_are_size_groups() {
         service.get_scan(Some(&older.id)).unwrap_err().code,
         ErrorCode::ScanNotFound
     );
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn history_retention_keeps_the_requested_latest_results_and_the_open_scan() {
+    let f = Fixture::new();
+    fs::write(f.root.join("file"), [0]).unwrap();
+    let service = f.service();
+    let run = || {
+        let (tx, rx) = mpsc::channel();
+        let scan = service
+            .start(f.request(), move |update| tx.send(update).is_ok())
+            .unwrap();
+        wait_terminal(&rx);
+        scan
+    };
+    let protected = run();
+    let removed = run();
+    let latest = run();
+
+    let cleanup = service.cleanup_history(1, Some(&protected.id)).unwrap();
+    assert_eq!(cleanup.deleted_scan_ids, vec![removed.id]);
+    let remaining = service.history(None).unwrap().items;
+    assert_eq!(remaining.len(), 2);
+    assert_eq!(remaining[0].id, latest.id);
+    assert_eq!(remaining[1].id, protected.id);
     service.shutdown().unwrap();
 }
 
@@ -731,6 +761,78 @@ fn duplicate_confirmation_requires_matching_content_not_just_size() {
     assert_eq!(groups.items.len(), 1);
     assert_eq!(groups.items[0].files_count, "2");
     assert_eq!(groups.items[0].size, "17");
+    let files = service
+        .duplicate_files(
+            groups.scan_id.as_deref().unwrap(),
+            &groups.items[0].content_hash,
+            None,
+        )
+        .unwrap();
+    assert_eq!(files.items.len(), 2);
+    let ids = files
+        .items
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        service
+            .delete_duplicate_entries(groups.scan_id.as_deref().unwrap(), &ids)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidTarget
+    );
+    let survivor_path = files.items[1].path.clone();
+    fs::remove_file(survivor_path).unwrap();
+    assert_eq!(
+        service
+            .delete_duplicate_entries(
+                groups.scan_id.as_deref().unwrap(),
+                &[files.items[0].id.clone()],
+            )
+            .unwrap_err()
+            .code,
+        ErrorCode::EntryChanged
+    );
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn duplicate_confirmation_reuses_cache_and_excludes_disappeared_files() {
+    let f = Fixture::new();
+    let first = f.root.join("copy-a");
+    let second = f.root.join("copy-b");
+    fs::write(&first, b"same-content").unwrap();
+    fs::write(&second, b"same-content").unwrap();
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    wait_terminal(&rx);
+    assert_eq!(service.confirm_duplicates().unwrap().items.len(), 1);
+    let connection = Connection::open(&f.db).unwrap();
+    let cached: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM entries WHERE partial_fingerprint IS NOT NULL AND content_hash IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(cached, 2);
+    drop(connection);
+
+    fs::remove_file(&second).unwrap();
+    let refreshed = service.confirm_duplicates().unwrap();
+    assert!(refreshed.items.is_empty());
+    let connection = Connection::open(&f.db).unwrap();
+    let cleared: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM entries WHERE name='copy-b' AND partial_fingerprint IS NULL AND content_hash IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(cleared, 1);
     service.shutdown().unwrap();
 }
 

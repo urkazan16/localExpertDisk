@@ -1,7 +1,8 @@
 use analyzer::Totals;
 use domain::{
     AppError, AppInfo, BatchOperationResult, CategorySummary, DirectoryMap, DirectoryMapMetric,
-    DuplicateGroupPage, EntryPage, ErrorCode, IndexedEntry, OldFileCriterion, OldFilePage,
+    DuplicateDeleteFailure, DuplicateDeleteResult, DuplicateFilePage, DuplicateGroupPage,
+    EntryPage, ErrorCode, HistoryCleanupResult, IndexedEntry, OldFileCriterion, OldFilePage,
     ScanComparison, ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState,
     StartScanRequest,
 };
@@ -150,6 +151,19 @@ impl ScanService {
     pub fn delete_history(&self, scan_id: &str) -> Result<(), AppError> {
         guard(&self.shared.storage)?.delete_scan_history(parse_id(scan_id)?)
     }
+    pub fn cleanup_history(
+        &self,
+        keep_latest: u16,
+        protected_scan_id: Option<&str>,
+    ) -> Result<HistoryCleanupResult, AppError> {
+        if !(1..=1000).contains(&keep_latest) {
+            return Err(AppError::new(ErrorCode::InvalidTarget));
+        }
+        guard(&self.shared.storage)?.cleanup_scan_history(
+            usize::from(keep_latest),
+            protected_scan_id.map(parse_id).transpose()?,
+        )
+    }
     pub fn duplicate_candidates(
         &self,
         after: Option<&str>,
@@ -169,18 +183,33 @@ impl ScanService {
         let (scan_id, candidates) = guard(&self.shared.storage)?.duplicate_hash_candidates()?;
         let mut fingerprints = std::collections::BTreeMap::<(u64, String), Vec<_>>::new();
         for candidate in candidates {
-            let metadata = NativeFileSystem
-                .metadata(&candidate.path)
-                .map_err(|_| AppError::new(ErrorCode::EntryChanged))?;
-            if metadata.kind != EntryKind::File
-                || metadata.logical_size != candidate.size
-                || (candidate.identity.is_some() && metadata.identity != candidate.identity)
-                || (candidate.modified_at_ms.is_some()
-                    && metadata.modified_at_ms != candidate.modified_at_ms)
-            {
+            if !hash_candidate_unchanged(&NativeFileSystem, &candidate) {
+                guard(&self.shared.storage)?.clear_duplicate_hashes(scan_id, candidate.id)?;
                 continue;
             }
-            let fingerprint = hash_file(&candidate.path, candidate.size, true)?;
+            let fingerprint = match candidate.partial_fingerprint.clone() {
+                Some(value) => value,
+                None => match hash_file(&candidate.path, candidate.size, true) {
+                    Ok(value) => {
+                        if !hash_candidate_unchanged(&NativeFileSystem, &candidate) {
+                            guard(&self.shared.storage)?
+                                .clear_duplicate_hashes(scan_id, candidate.id)?;
+                            continue;
+                        }
+                        guard(&self.shared.storage)?.record_partial_fingerprint(
+                            scan_id,
+                            candidate.id,
+                            &value,
+                        )?;
+                        value
+                    }
+                    Err(_) => {
+                        guard(&self.shared.storage)?
+                            .clear_duplicate_hashes(scan_id, candidate.id)?;
+                        continue;
+                    }
+                },
+            };
             fingerprints
                 .entry((candidate.size, fingerprint))
                 .or_default()
@@ -191,7 +220,17 @@ impl ScanService {
             .filter(|(_, group)| group.len() > 1)
         {
             for candidate in group {
-                let hash = hash_file(&candidate.path, candidate.size, false)?;
+                if candidate.content_hash.is_some() {
+                    continue;
+                }
+                let Ok(hash) = hash_file(&candidate.path, candidate.size, false) else {
+                    guard(&self.shared.storage)?.clear_duplicate_hashes(scan_id, candidate.id)?;
+                    continue;
+                };
+                if !hash_candidate_unchanged(&NativeFileSystem, &candidate) {
+                    guard(&self.shared.storage)?.clear_duplicate_hashes(scan_id, candidate.id)?;
+                    continue;
+                }
                 guard(&self.shared.storage)?.record_content_hash(scan_id, candidate.id, &hash)?;
             }
         }
@@ -211,6 +250,73 @@ impl ScanService {
             })
             .transpose()?;
         guard(&self.shared.storage)?.confirmed_duplicates(after)
+    }
+    pub fn duplicate_files(
+        &self,
+        scan_id: &str,
+        content_hash: &str,
+        after: Option<&str>,
+    ) -> Result<DuplicateFilePage, AppError> {
+        if content_hash.len() != 64 || !content_hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(AppError::new(ErrorCode::InvalidTarget));
+        }
+        guard(&self.shared.storage)?.duplicate_files(
+            parse_id(scan_id)?,
+            content_hash,
+            after.map(parse_id).transpose()?.unwrap_or(0),
+        )
+    }
+    pub fn delete_duplicate_entries(
+        &self,
+        scan_id: &str,
+        entry_ids: &[String],
+    ) -> Result<DuplicateDeleteResult, AppError> {
+        let unique_ids = entry_ids.iter().collect::<std::collections::BTreeSet<_>>();
+        if entry_ids.is_empty() || entry_ids.len() > 100 || unique_ids.len() != entry_ids.len() {
+            return Err(AppError::new(ErrorCode::InvalidTarget));
+        }
+        let parsed = entry_ids
+            .iter()
+            .map(|id| parse_id(id))
+            .collect::<Result<Vec<_>, _>>()?;
+        let parsed_scan_id = parse_id(scan_id)?;
+        guard(&self.shared.storage)?.validate_duplicate_deletion(parsed_scan_id, &parsed)?;
+        let (group_count, survivors) =
+            guard(&self.shared.storage)?.duplicate_deletion_survivors(parsed_scan_id, &parsed)?;
+        let mut surviving_groups = std::collections::BTreeSet::new();
+        for survivor in survivors {
+            if hash_candidate_unchanged(&NativeFileSystem, &survivor) {
+                if let Some(hash) = survivor.content_hash {
+                    surviving_groups.insert(hash);
+                }
+            } else {
+                guard(&self.shared.storage)?.clear_duplicate_hashes(parsed_scan_id, survivor.id)?;
+            }
+        }
+        if surviving_groups.len() != group_count {
+            return Err(AppError::new(ErrorCode::EntryChanged));
+        }
+        let mut moved_entry_ids = Vec::new();
+        let mut failures = Vec::new();
+        for entry_id in entry_ids {
+            match self.move_to_trash(scan_id, entry_id) {
+                Ok(()) => moved_entry_ids.push(entry_id.clone()),
+                Err(error) => {
+                    if error.code == ErrorCode::EntryChanged {
+                        guard(&self.shared.storage)?
+                            .clear_duplicate_hashes(parsed_scan_id, parse_id(entry_id)?)?;
+                    }
+                    failures.push(DuplicateDeleteFailure {
+                        entry_id: entry_id.clone(),
+                        code: error.code,
+                    });
+                }
+            }
+        }
+        Ok(DuplicateDeleteResult {
+            moved_entry_ids,
+            failures,
+        })
     }
     pub fn issues(&self, id: &str, after: Option<&str>) -> Result<ScanIssuePage, AppError> {
         guard(&self.shared.storage)?
@@ -541,6 +647,20 @@ impl ScanService {
         }
         Ok(())
     }
+}
+
+fn hash_candidate_unchanged(
+    fs: &impl FileSystemProvider,
+    candidate: &storage::scans::HashCandidate,
+) -> bool {
+    let Ok(metadata) = fs.metadata(&candidate.path) else {
+        return false;
+    };
+    metadata.kind == EntryKind::File
+        && metadata.logical_size == candidate.size
+        && (candidate.identity.is_none() || metadata.identity == candidate.identity)
+        && (candidate.modified_at_ms.is_none()
+            || metadata.modified_at_ms == candidate.modified_at_ms)
 }
 
 fn hash_file(path: &Path, size: u64, partial: bool) -> Result<String, AppError> {
