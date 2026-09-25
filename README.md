@@ -58,11 +58,22 @@ npm run desktop:build -- --debug --no-bundle
 Для локальной сборки desktop без installer: `npm run desktop:build`.
 Signing, installers и release pipeline пока не настроены.
 
-Небольшой искусственный dataset (только **новый** каталог, 1–10000 файлов по 1024 байта):
+Искусственный dataset создаётся только в **новом** каталоге. Сохранён короткий
+совместимый вызов для набора файлов по 1024 байта:
 
 ```sh
 cargo run -p fixture-generator -- /tmp/local-expert-disk-example 100
 ```
+
+Профиль для Scanner Gate задаёт число файлов, каталогов, глубину и размер файла:
+
+```sh
+cargo run -p fixture-generator -- /tmp/local-expert-disk-p1m \
+  --files 1000000 --directories 100000 --depth 20 --file-size 0
+```
+
+Генератор ограничен 10 млн entries, глубиной 1024 и суммарным записываемым payload
+50 ГиБ. Нулевой размер удобен для metadata/queue benchmark без заполнения диска.
 
 Утилита не перезаписывает существующий каталог. После ошибки записи новый каталог
 может содержать частичный dataset; автоматического удаления нет.

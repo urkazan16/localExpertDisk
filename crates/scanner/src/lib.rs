@@ -48,6 +48,22 @@ fn issue(path: &Path, operation: &str, kind: io::ErrorKind) -> ScanIssue {
     }
 }
 
+fn record_issue(
+    issues: &mut Vec<ScanIssue>,
+    delta: &mut Totals,
+    path: &Path,
+    operation: &str,
+    kind: io::ErrorKind,
+) {
+    issues.push(issue(path, operation, kind));
+    delta.errors += 1;
+    // PermissionDenied means the filesystem object was intentionally omitted
+    // from the result, while the issue is still retained for diagnostics.
+    if kind == io::ErrorKind::PermissionDenied {
+        delta.skipped += 1;
+    }
+}
+
 /// Only committed batches appear in progress. Cancellation drops the uncommitted tail.
 pub fn scan(
     fs: &dyn FileSystemProvider,
@@ -102,8 +118,13 @@ pub fn scan(
                         },
                     ));
                 }
-                issues.push(issue(&task.path, "read_directory", error.kind()));
-                delta.errors += 1;
+                record_issue(
+                    &mut issues,
+                    &mut delta,
+                    &task.path,
+                    "read_directory",
+                    error.kind(),
+                );
             }
             Ok(mut listing) => loop {
                 if cancel.load(Ordering::Acquire) {
@@ -114,16 +135,20 @@ pub fn scan(
                 };
                 match item {
                     Err(error) => {
-                        issues.push(issue(&task.path, "read_entry", error.kind()));
-                        delta.errors += 1;
+                        record_issue(
+                            &mut issues,
+                            &mut delta,
+                            &task.path,
+                            "read_entry",
+                            error.kind(),
+                        );
                     }
                     Ok(path) if path.starts_with(excluded) => {
                         delta.skipped += 1;
                     }
                     Ok(path) => match fs.metadata(&path) {
                         Err(error) => {
-                            issues.push(issue(&path, "metadata", error.kind()));
-                            delta.errors += 1;
+                            record_issue(&mut issues, &mut delta, &path, "metadata", error.kind());
                         }
                         Ok(metadata) => {
                             let extra = match metadata.kind {
@@ -186,7 +211,9 @@ pub fn scan(
 mod tests {
     use super::*;
     use filesystem::native::DirectoryEntries;
-    struct Synthetic;
+    struct Synthetic {
+        entries: usize,
+    }
     impl FileSystemProvider for Synthetic {
         fn metadata(&self, path: &Path) -> io::Result<EntryMetadata> {
             let directory = path == Path::new("root");
@@ -205,8 +232,9 @@ mod tests {
             })
         }
         fn read_directory(&self, _: &Path) -> io::Result<DirectoryEntries> {
+            let entries = self.entries;
             Ok(Box::new(
-                (0..10_000).map(|i| Ok(PathBuf::from(format!("root/file-{i}")))),
+                (0..entries).map(|i| Ok(PathBuf::from(format!("root/file-{i}")))),
             ))
         }
     }
@@ -215,6 +243,7 @@ mod tests {
         total: Totals,
         max_batch: usize,
         writes: usize,
+        issue_codes: Vec<String>,
     }
     impl ScanSink for Sink {
         fn next_directory(&mut self) -> Result<Option<DirectoryTask>, AppError> {
@@ -233,6 +262,8 @@ mod tests {
             total: Totals,
         ) -> Result<(), AppError> {
             self.max_batch = self.max_batch.max(entries.len() + issues.len());
+            self.issue_codes
+                .extend(issues.iter().map(|issue| issue.code.clone()));
             self.total = total;
             self.writes += 1;
             Ok(())
@@ -243,15 +274,16 @@ mod tests {
         }
     }
     #[test]
-    fn wide_directory_is_delivered_in_bounded_batches() {
+    fn hundred_thousand_entries_are_delivered_in_bounded_batches() {
         let mut sink = Sink {
             queued: true,
             total: Totals::default(),
             max_batch: 0,
             writes: 0,
+            issue_codes: vec![],
         };
         let result = scan(
-            &Synthetic,
+            &Synthetic { entries: 100_000 },
             &mut sink,
             &AtomicBool::new(false),
             Path::new("excluded"),
@@ -261,8 +293,8 @@ mod tests {
         assert_eq!(result, ScanState::Completed);
         assert!(sink.max_batch <= BATCH_SIZE);
         assert!(sink.writes > 1);
-        assert_eq!(sink.total.files, 10_000);
-        assert_eq!(sink.total.logical, 30_000);
+        assert_eq!(sink.total.files, 100_000);
+        assert_eq!(sink.total.logical, 300_000);
     }
     #[test]
     fn pre_cancelled_scan_does_not_touch_filesystem_or_sink() {
@@ -271,10 +303,11 @@ mod tests {
             total: Totals::default(),
             max_batch: 0,
             writes: 0,
+            issue_codes: vec![],
         };
         assert_eq!(
             scan(
-                &Synthetic,
+                &Synthetic { entries: 10_000 },
                 &mut sink,
                 &AtomicBool::new(true),
                 Path::new("excluded"),
@@ -313,7 +346,7 @@ mod tests {
     fn storage_write_failure_stops_scan_without_reporting_completion() {
         assert_eq!(
             scan(
-                &Synthetic,
+                &Synthetic { entries: 10_000 },
                 &mut FailingSink,
                 &AtomicBool::new(false),
                 Path::new("excluded"),
@@ -349,6 +382,7 @@ mod tests {
             total: Totals::default(),
             max_batch: 0,
             writes: 0,
+            issue_codes: vec![],
         };
         assert_eq!(
             scan(
@@ -362,5 +396,60 @@ mod tests {
             .code,
             ErrorCode::PermissionDenied
         );
+    }
+
+    struct InterruptedListing;
+    impl FileSystemProvider for InterruptedListing {
+        fn metadata(&self, path: &Path) -> io::Result<EntryMetadata> {
+            Ok(EntryMetadata {
+                kind: if path == Path::new("root") {
+                    EntryKind::Directory
+                } else {
+                    EntryKind::File
+                },
+                logical_size: if path == Path::new("root") { 0 } else { 4 },
+                allocated_size: None,
+                created_at_ms: None,
+                modified_at_ms: None,
+                accessed_at_ms: None,
+                identity: None,
+            })
+        }
+
+        fn read_directory(&self, _: &Path) -> io::Result<DirectoryEntries> {
+            Ok(Box::new(
+                vec![
+                    Ok(PathBuf::from("root/first")),
+                    Err(io::ErrorKind::PermissionDenied.into()),
+                    Ok(PathBuf::from("root/second")),
+                ]
+                .into_iter(),
+            ))
+        }
+    }
+
+    #[test]
+    fn directory_iterator_failure_is_recorded_and_remaining_entries_are_scanned() {
+        let mut sink = Sink {
+            queued: true,
+            total: Totals::default(),
+            max_batch: 0,
+            writes: 0,
+            issue_codes: vec![],
+        };
+        let result = scan(
+            &InterruptedListing,
+            &mut sink,
+            &AtomicBool::new(false),
+            Path::new("excluded"),
+            || {},
+        )
+        .unwrap();
+        assert_eq!(result, ScanState::Partial);
+        assert_eq!(sink.total.files, 2);
+        assert_eq!(sink.total.logical, 8);
+        assert_eq!(sink.total.errors, 1);
+        assert_eq!(sink.total.skipped, 1);
+        assert_eq!(sink.issue_codes, ["permission_denied"]);
     }
 }

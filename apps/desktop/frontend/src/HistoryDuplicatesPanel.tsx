@@ -3,6 +3,7 @@ import {
   compareScans,
   confirmDuplicates,
   deleteScanHistory,
+  getConfirmedDuplicates,
   getScanHistory,
   type DuplicateGroupPage,
   type ScanComparison,
@@ -16,6 +17,7 @@ export function HistoryDuplicatesPanel({ enabled }: { enabled: boolean }) {
   const [comparison, setComparison] = useState<ScanComparison | null>(null);
   const [duplicates, setDuplicates] = useState<DuplicateGroupPage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [duplicateLoading, setDuplicateLoading] = useState(false);
   function loadHistory() {
     getScanHistory().then(setHistory, (reason: unknown) =>
       setError(errorMessage(reason)),
@@ -25,6 +27,29 @@ export function HistoryDuplicatesPanel({ enabled }: { enabled: boolean }) {
     if (!enabled) return;
     loadHistory();
   }, [enabled]);
+  async function verifyDuplicates() {
+    setDuplicateLoading(true);
+    setError(null);
+    try {
+      setDuplicates(await confirmDuplicates());
+    } catch (reason: unknown) {
+      setError(errorMessage(reason));
+    } finally {
+      setDuplicateLoading(false);
+    }
+  }
+  async function loadNextDuplicatePage() {
+    if (!duplicates?.next_cursor) return;
+    setDuplicateLoading(true);
+    setError(null);
+    try {
+      setDuplicates(await getConfirmedDuplicates(duplicates.next_cursor));
+    } catch (reason: unknown) {
+      setError(errorMessage(reason));
+    } finally {
+      setDuplicateLoading(false);
+    }
+  }
   if (!enabled) return null;
   return (
     <section className="panel" aria-labelledby="history-title">
@@ -87,20 +112,17 @@ export function HistoryDuplicatesPanel({ enabled }: { enabled: boolean }) {
           <h3>Кандидаты в дубликаты</h3>
           <button
             className="secondary"
-            onClick={() =>
-              confirmDuplicates().then(setDuplicates, (reason: unknown) =>
-                setError(errorMessage(reason)),
-              )
-            }
+            disabled={duplicateLoading}
+            onClick={() => void verifyDuplicates()}
           >
-            Проверить содержимое
+            {duplicateLoading ? "Проверяем…" : "Проверить содержимое"}
           </button>
         </div>
         {duplicates &&
           (duplicates.items.length ? (
             <ul className="issues">
-              {duplicates.items.map((group) => (
-                <li key={group.size}>
+              {duplicates.items.map((group, index) => (
+                <li key={`${group.size}-${index}`}>
                   {formatBytes(group.size)} · {group.files_count} файлов · можно
                   освободить до {formatBytes(group.reclaimable_size)}
                 </li>
@@ -109,6 +131,15 @@ export function HistoryDuplicatesPanel({ enabled }: { enabled: boolean }) {
           ) : (
             <p className="hint">Групп одинакового размера нет.</p>
           ))}
+        {duplicates?.next_cursor && (
+          <button
+            className="secondary"
+            disabled={duplicateLoading}
+            onClick={() => void loadNextDuplicatePage()}
+          >
+            Следующая страница дубликатов
+          </button>
+        )}
         <p className="hint">
           Показаны только группы с совпадающим полным SHA-256. Файлы не
           удаляются автоматически.

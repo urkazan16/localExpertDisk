@@ -132,6 +132,45 @@ fn parse_old_files_cursor(cursor: Option<&str>) -> Result<(i64, i64), AppError> 
         .zip(id)
         .ok_or_else(|| AppError::new(ErrorCode::ScanNotFound))
 }
+
+fn parse_numeric_cursor(
+    cursor: Option<&str>,
+    prefix: &str,
+) -> Result<Option<(i64, i64)>, AppError> {
+    let Some(cursor) = cursor else {
+        return Ok(None);
+    };
+    let mut parts = cursor.split(':');
+    let valid_prefix = parts.next() == Some(prefix);
+    let value = parts.next().and_then(|value| value.parse::<i64>().ok());
+    let id = parts
+        .next()
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value > 0);
+    if !valid_prefix || parts.next().is_some() {
+        return Err(AppError::new(ErrorCode::ScanNotFound));
+    }
+    value
+        .zip(id)
+        .map(Some)
+        .ok_or_else(|| AppError::new(ErrorCode::ScanNotFound))
+}
+
+fn parse_name_cursor(cursor: Option<&str>) -> Result<Option<(String, i64)>, AppError> {
+    cursor
+        .map(|cursor| {
+            let encoded = cursor
+                .strip_prefix("name:")
+                .ok_or_else(|| AppError::new(ErrorCode::ScanNotFound))?;
+            let (name, id): (String, i64) = serde_json::from_str(encoded)
+                .map_err(|_| AppError::new(ErrorCode::ScanNotFound))?;
+            if id <= 0 {
+                return Err(AppError::new(ErrorCode::ScanNotFound));
+            }
+            Ok((name, id))
+        })
+        .transpose()
+}
 const SELECT_SESSION: &str = "SELECT id,root_display,state,files_count,directories_count,symlinks_count,skipped_count,logical_size,allocated_size,errors_count,started_at_ms,finished_at_ms,failure FROM scan_sessions";
 const FILE_CATEGORY_SQL: &str = "CASE
  WHEN lower(name) GLOB '*.mp4' OR lower(name) GLOB '*.mkv' OR lower(name) GLOB '*.mov' OR lower(name) GLOB '*.avi' OR lower(name) GLOB '*.webm' THEN 'video'
@@ -591,26 +630,100 @@ impl SqliteStorage {
         min_size: i64,
         category: Option<FileCategory>,
         sort: FileSort,
+        cursor: Option<&str>,
     ) -> Result<EntryPage, AppError> {
         self.ensure_queryable(scan_id)?;
-        let order = match sort {
-            FileSort::SizeDesc => "logical_size DESC,id",
-            FileSort::ModifiedDesc => "modified_at_ms DESC,id",
-            FileSort::NameAsc => "name COLLATE NOCASE,id",
-        };
-        let query = format!("WITH classified AS (SELECT e.*, {FILE_CATEGORY_SQL} AS category FROM entries e WHERE e.scan_id=?1 AND e.kind='file') SELECT id,parent_id,name,path,kind,logical_size,logical_size FROM classified WHERE logical_size>=?2 AND (?3 IS NULL OR category=?3) ORDER BY {order} LIMIT 100");
         let value = category.map(category_key);
-        let rows = self
-            .connection
-            .prepare(&query)
-            .map_err(storage_error)?
-            .query_map(params![scan_id, min_size, value], read_entry)
-            .map_err(storage_error)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(storage_error)?;
+        let (mut rows, keys): (Vec<IndexedEntry>, Vec<String>) = match sort {
+            FileSort::SizeDesc => {
+                let (size, id, has_cursor) = parse_numeric_cursor(cursor, "size")?
+                    .map(|(value, id)| (value, id, 1_i64))
+                    .unwrap_or((0, 0, 0));
+                let query = format!("WITH classified AS (SELECT e.*, {FILE_CATEGORY_SQL} AS category FROM entries e WHERE e.scan_id=?1 AND e.kind='file') SELECT id,parent_id,name,path,kind,logical_size,logical_size,logical_size FROM classified WHERE logical_size>=?2 AND (?3 IS NULL OR category=?3) AND (?6=0 OR logical_size<?4 OR (logical_size=?4 AND id>?5)) ORDER BY logical_size DESC,id LIMIT 101");
+                let values = self
+                    .connection
+                    .prepare(&query)
+                    .map_err(storage_error)?
+                    .query_map(
+                        params![scan_id, min_size, value, size, id, has_cursor],
+                        |row| {
+                            Ok((
+                                read_entry(row)?,
+                                format!("size:{}:{}", row.get::<_, i64>(7)?, row.get::<_, i64>(0)?),
+                            ))
+                        },
+                    )
+                    .map_err(storage_error)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(storage_error)?;
+                values.into_iter().unzip()
+            }
+            FileSort::ModifiedDesc => {
+                let (modified, id, has_cursor) = parse_numeric_cursor(cursor, "modified")?
+                    .map(|(value, id)| (value, id, 1_i64))
+                    .unwrap_or((0, 0, 0));
+                let query = format!("WITH classified AS (SELECT e.*, {FILE_CATEGORY_SQL} AS category FROM entries e WHERE e.scan_id=?1 AND e.kind='file') SELECT id,parent_id,name,path,kind,logical_size,logical_size,COALESCE(modified_at_ms,{}) AS sort_value FROM classified WHERE logical_size>=?2 AND (?3 IS NULL OR category=?3) AND (?6=0 OR COALESCE(modified_at_ms,{})<?4 OR (COALESCE(modified_at_ms,{})=?4 AND id>?5)) ORDER BY sort_value DESC,id LIMIT 101", i64::MIN, i64::MIN, i64::MIN);
+                let values = self
+                    .connection
+                    .prepare(&query)
+                    .map_err(storage_error)?
+                    .query_map(
+                        params![scan_id, min_size, value, modified, id, has_cursor],
+                        |row| {
+                            Ok((
+                                read_entry(row)?,
+                                format!(
+                                    "modified:{}:{}",
+                                    row.get::<_, i64>(7)?,
+                                    row.get::<_, i64>(0)?
+                                ),
+                            ))
+                        },
+                    )
+                    .map_err(storage_error)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(storage_error)?;
+                values.into_iter().unzip()
+            }
+            FileSort::NameAsc => {
+                let cursor = parse_name_cursor(cursor)?;
+                let (name, id, has_cursor) = cursor
+                    .map(|(name, id)| (name, id, 1_i64))
+                    .unwrap_or_else(|| (String::new(), 0, 0));
+                let query = format!("WITH classified AS (SELECT e.*, {FILE_CATEGORY_SQL} AS category FROM entries e WHERE e.scan_id=?1 AND e.kind='file') SELECT id,parent_id,name,path,kind,logical_size,logical_size,name FROM classified WHERE logical_size>=?2 AND (?3 IS NULL OR category=?3) AND (?6=0 OR name COLLATE NOCASE>?4 COLLATE NOCASE OR (name=?4 COLLATE NOCASE AND id>?5)) ORDER BY name COLLATE NOCASE,id LIMIT 101");
+                let values = self
+                    .connection
+                    .prepare(&query)
+                    .map_err(storage_error)?
+                    .query_map(
+                        params![scan_id, min_size, value, name, id, has_cursor],
+                        |row| {
+                            let name: String = row.get(7)?;
+                            let id: i64 = row.get(0)?;
+                            let cursor = format!(
+                                "name:{}",
+                                serde_json::to_string(&(name, id)).map_err(|error| {
+                                    rusqlite::Error::ToSqlConversionFailure(Box::new(error))
+                                })?
+                            );
+                            Ok((read_entry(row)?, cursor))
+                        },
+                    )
+                    .map_err(storage_error)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(storage_error)?;
+                values.into_iter().unzip()
+            }
+        };
+        let next_cursor = if rows.len() > 100 {
+            rows.pop();
+            keys.get(99).cloned()
+        } else {
+            None
+        };
         Ok(EntryPage {
             items: rows,
-            next_cursor: None,
+            next_cursor,
         })
     }
 
@@ -978,7 +1091,7 @@ impl SqliteStorage {
     }
     pub fn confirmed_duplicates(
         &self,
-        after_size: Option<i64>,
+        after_offset: Option<i64>,
     ) -> Result<DuplicateGroupPage, AppError> {
         let Some(scan) = self.latest_queryable_scan()? else {
             return Ok(DuplicateGroupPage {
@@ -986,10 +1099,10 @@ impl SqliteStorage {
                 next_cursor: None,
             });
         };
-        let after = after_size.unwrap_or(i64::MAX);
-        let mut statement = self.connection.prepare("SELECT logical_size,COUNT(*) FROM entries WHERE scan_id=?1 AND kind='file' AND content_hash IS NOT NULL AND logical_size<?2 GROUP BY logical_size,content_hash HAVING COUNT(*)>1 ORDER BY logical_size DESC,content_hash LIMIT 51").map_err(storage_error)?;
+        let offset = after_offset.unwrap_or(0);
+        let mut statement = self.connection.prepare("SELECT logical_size,COUNT(*) FROM entries WHERE scan_id=?1 AND kind='file' AND content_hash IS NOT NULL GROUP BY logical_size,content_hash HAVING COUNT(*)>1 ORDER BY logical_size DESC,content_hash LIMIT 51 OFFSET ?2").map_err(storage_error)?;
         let mut rows = statement
-            .query_map(params![scan.id, after], |row| {
+            .query_map(params![scan.id, offset], |row| {
                 let size: i64 = row.get(0)?;
                 let count: i64 = row.get(1)?;
                 Ok(DuplicateGroup {
@@ -1006,7 +1119,7 @@ impl SqliteStorage {
             .map_err(storage_error)?;
         let next_cursor = if rows.len() > 50 {
             rows.pop();
-            rows.last().map(|group| group.size.clone())
+            Some((offset + 50).to_string())
         } else {
             None
         };

@@ -4,8 +4,8 @@ import { AnalyzerPanel } from "./AnalyzerPanel";
 import {
   getChildren,
   getCategories,
+  getFilesInCategory,
   getFilteredLargeFiles,
-  getLargeFiles,
   getScanRoot,
   moveEntriesToTrash,
   moveEntryToTrash,
@@ -20,7 +20,6 @@ vi.mock("./api/generated", () => ({
   getCategories: vi.fn(),
   getFilesInCategory: vi.fn(),
   getFilteredLargeFiles: vi.fn(),
-  getLargeFiles: vi.fn(),
   getScanRoot: vi.fn(),
   moveEntryToTrash: vi.fn(),
   moveEntriesToTrash: vi.fn(),
@@ -121,11 +120,24 @@ describe("Analyzer UI", () => {
     expect(screen.getAllByRole("listitem")[0]).toHaveTextContent("Арбуз");
   });
 
+  it("loads the next category page using its cursor", async () => {
+    vi.mocked(getCategories).mockResolvedValue([
+      { category: "images", files_count: "101", logical_size: "101" },
+    ]);
+    vi.mocked(getFilesInCategory)
+      .mockResolvedValueOnce({ items: [], next_cursor: "99" })
+      .mockResolvedValueOnce({ items: [], next_cursor: null });
+    render(<AnalyzerPanel enabled scan={scan} />);
+    await screen.findByRole("button", { name: "Изображения" });
+    fireEvent.click(screen.getByRole("button", { name: "Изображения" }));
+    await screen.findByRole("button", { name: "Следующая страница" });
+    fireEvent.click(screen.getByRole("button", { name: "Следующая страница" }));
+    await waitFor(() =>
+      expect(getFilesInCategory).toHaveBeenLastCalledWith("7", "images", "99"),
+    );
+  });
+
   it("queries large files and search only after the user requests them", async () => {
-    vi.mocked(getLargeFiles).mockResolvedValue({
-      items: [],
-      next_cursor: null,
-    });
     vi.mocked(searchEntries).mockResolvedValue({
       items: [],
       next_cursor: null,
@@ -142,6 +154,7 @@ describe("Analyzer UI", () => {
         "0",
         null,
         "size_desc",
+        null,
       ),
     );
     fireEvent.change(screen.getByLabelText("Имя или часть имени"), {
@@ -149,6 +162,47 @@ describe("Analyzer UI", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Найти" }));
     await waitFor(() => expect(searchEntries).toHaveBeenCalledWith("7", "log"));
+  });
+
+  it("keeps active filters while loading later large-file and search pages", async () => {
+    vi.mocked(getFilteredLargeFiles)
+      .mockResolvedValueOnce({ items: [], next_cursor: "size:10:4" })
+      .mockResolvedValueOnce({ items: [], next_cursor: null });
+    vi.mocked(searchEntries)
+      .mockResolvedValueOnce({ items: [], next_cursor: "44" })
+      .mockResolvedValueOnce({ items: [], next_cursor: null });
+    render(<AnalyzerPanel enabled scan={scan} />);
+    await screen.findByText("nested");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Показать крупные файлы" }),
+    );
+    await screen.findByRole("button", { name: "Следующая страница" });
+    fireEvent.click(screen.getByRole("button", { name: "Следующая страница" }));
+    await waitFor(() =>
+      expect(getFilteredLargeFiles).toHaveBeenLastCalledWith(
+        "7",
+        "0",
+        null,
+        "size_desc",
+        "size:10:4",
+      ),
+    );
+
+    fireEvent.change(screen.getByLabelText("Имя или часть имени"), {
+      target: { value: "report" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Найти" }));
+    await screen.findByRole("button", { name: "Следующая страница поиска" });
+    fireEvent.change(screen.getByLabelText("Имя или часть имени"), {
+      target: { value: "changed but not submitted" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Следующая страница поиска" }),
+    );
+    await waitFor(() =>
+      expect(searchEntries).toHaveBeenLastCalledWith("7", "report", "44"),
+    );
   });
 
   it("does not query an unfinished scan", () => {

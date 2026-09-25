@@ -118,10 +118,11 @@ async fn get_filtered_large_files(
     min_size: String,
     category: Option<FileCategory>,
     sort: FileSort,
+    after_id: Option<String>,
 ) -> Result<EntryPage, AppError> {
     let service = state.service()?;
     tauri::async_runtime::spawn_blocking(move || {
-        service.filtered_large_files(&scan_id, &min_size, category, sort)
+        service.filtered_large_files(&scan_id, &min_size, category, sort, after_id.as_deref())
     })
     .await
     .map_err(|_| internal())?
@@ -284,6 +285,16 @@ async fn confirm_duplicates(
         .await
         .map_err(|_| internal())?
 }
+#[tauri::command]
+async fn get_confirmed_duplicates(
+    state: tauri::State<'_, AppState>,
+    after_id: Option<String>,
+) -> Result<DuplicateGroupPage, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.confirmed_duplicates(after_id.as_deref()))
+        .await
+        .map_err(|_| internal())?
+}
 fn initialize_storage(app: &tauri::App) -> Result<ScanService, AppError> {
     let unavailable = || AppError::new(ErrorCode::StorageUnavailable);
     let directory = app.path().app_data_dir().map_err(|_| unavailable())?;
@@ -317,7 +328,8 @@ fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         compare_scans,
         delete_scan_history,
         get_duplicate_candidates,
-        confirm_duplicates
+        confirm_duplicates,
+        get_confirmed_duplicates
     ])
 }
 fn main() {

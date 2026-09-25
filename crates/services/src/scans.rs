@@ -180,6 +180,21 @@ impl ScanService {
         }
         guard(&self.shared.storage)?.confirmed_duplicates(None)
     }
+    pub fn confirmed_duplicates(
+        &self,
+        after: Option<&str>,
+    ) -> Result<DuplicateGroupPage, AppError> {
+        let after = after
+            .map(|value| {
+                value
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|value| *value >= 0)
+                    .ok_or_else(|| AppError::new(ErrorCode::InvalidTarget))
+            })
+            .transpose()?;
+        guard(&self.shared.storage)?.confirmed_duplicates(after)
+    }
     pub fn issues(&self, id: &str, after: Option<&str>) -> Result<ScanIssuePage, AppError> {
         guard(&self.shared.storage)?
             .scan_issues(parse_id(id)?, after.map(parse_id).transpose()?.unwrap_or(0))
@@ -208,6 +223,7 @@ impl ScanService {
         min_size: &str,
         category: Option<domain::FileCategory>,
         sort: domain::FileSort,
+        after: Option<&str>,
     ) -> Result<EntryPage, AppError> {
         let min_size = min_size
             .parse::<i64>()
@@ -219,6 +235,7 @@ impl ScanService {
             min_size,
             category,
             sort,
+            after,
         )
     }
     pub fn categories(&self, scan_id: &str) -> Result<Vec<CategorySummary>, AppError> {

@@ -4,7 +4,6 @@ import {
   getCategories,
   getFilesInCategory,
   getFilteredLargeFiles,
-  getLargeFiles,
   getScanRoot,
   moveEntriesToTrash,
   moveEntryToTrash,
@@ -148,6 +147,7 @@ export function AnalyzerPanel({
   const [largeSort, setLargeSort] = useState<FileSort>("size_desc");
   const [search, setSearch] = useState<EntryPage | null>(null);
   const [searchText, setSearchText] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<IndexedEntry[]>([]);
@@ -166,6 +166,7 @@ export function AnalyzerPanel({
     setActiveCategory(null);
     setLargeFiles(null);
     setSearch(null);
+    setSearchQuery("");
     setError(null);
     setSelected([]);
     if (!usable || !scan) return;
@@ -218,14 +219,13 @@ export function AnalyzerPanel({
     setError(null);
     try {
       setLargeFiles(
-        after
-          ? await getLargeFiles(scan.id, after)
-          : await getFilteredLargeFiles(
-              scan.id,
-              largeMinSize,
-              largeCategory || null,
-              largeSort,
-            ),
+        await getFilteredLargeFiles(
+          scan.id,
+          largeMinSize,
+          largeCategory || null,
+          largeSort,
+          after,
+        ),
       );
     } catch (reason: unknown) {
       setError(errorMessage(reason));
@@ -234,13 +234,16 @@ export function AnalyzerPanel({
     }
   }
 
-  async function showCategory(category: FileCategory) {
+  async function showCategory(
+    category: FileCategory,
+    after: string | null = null,
+  ) {
     if (!scan) return;
     setLoading(true);
     setError(null);
     try {
       setActiveCategory(category);
-      setCategoryFiles(await getFilesInCategory(scan.id, category));
+      setCategoryFiles(await getFilesInCategory(scan.id, category, after));
     } catch (reason: unknown) {
       setError(errorMessage(reason));
     } finally {
@@ -250,11 +253,26 @@ export function AnalyzerPanel({
 
   async function submitSearch(event: FormEvent) {
     event.preventDefault();
-    if (!scan || !searchText.trim()) return;
+    const query = searchText.trim();
+    if (!scan || !query) return;
     setLoading(true);
     setError(null);
     try {
-      setSearch(await searchEntries(scan.id, searchText.trim()));
+      setSearchQuery(query);
+      setSearch(await searchEntries(scan.id, query));
+    } catch (reason: unknown) {
+      setError(errorMessage(reason));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function nextSearchPage() {
+    if (!scan || !search?.next_cursor || !searchQuery) return;
+    setLoading(true);
+    setError(null);
+    try {
+      setSearch(await searchEntries(scan.id, searchQuery, search.next_cursor));
     } catch (reason: unknown) {
       setError(errorMessage(reason));
     } finally {
@@ -525,6 +543,16 @@ export function AnalyzerPanel({
                 onAction={(entry, action) => void actOnEntry(entry, action)}
                 onTrash={trash ? (entry) => void trashEntry(entry) : undefined}
               />
+              {categoryFiles.next_cursor && (
+                <button
+                  className="secondary"
+                  onClick={() =>
+                    void showCategory(activeCategory, categoryFiles.next_cursor)
+                  }
+                >
+                  Следующая страница
+                </button>
+              )}
             </section>
           )}
           <section className="analysis-block" aria-labelledby="search-title">
@@ -547,11 +575,24 @@ export function AnalyzerPanel({
               </div>
             </form>
             {search && (
-              <EntryRows
-                items={search.items}
-                onAction={(entry, action) => void actOnEntry(entry, action)}
-                onTrash={trash ? (entry) => void trashEntry(entry) : undefined}
-              />
+              <>
+                <EntryRows
+                  items={search.items}
+                  onAction={(entry, action) => void actOnEntry(entry, action)}
+                  onTrash={
+                    trash ? (entry) => void trashEntry(entry) : undefined
+                  }
+                />
+                {search.next_cursor && (
+                  <button
+                    className="secondary"
+                    disabled={loading}
+                    onClick={() => void nextSearchPage()}
+                  >
+                    Следующая страница поиска
+                  </button>
+                )}
+              </>
             )}
           </section>
         </>

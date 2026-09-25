@@ -74,8 +74,8 @@ export function getChildren(scanId: string, directoryId: string, afterId: string
 export function getLargeFiles(scanId: string, afterId: string | null = null): Promise<EntryPage> {
   return invoke<EntryPage>('get_large_files', { scanId, afterId });
 }
-export function getFilteredLargeFiles(scanId: string, minSize: string, category: FileCategory | null, sort: FileSort): Promise<EntryPage> {
-  return invoke<EntryPage>('get_filtered_large_files', { scanId, minSize, category, sort });
+export function getFilteredLargeFiles(scanId: string, minSize: string, category: FileCategory | null, sort: FileSort, afterId: string | null = null): Promise<EntryPage> {
+  return invoke<EntryPage>('get_filtered_large_files', { scanId, minSize, category, sort, afterId });
 }
 export function getCategories(scanId: string): Promise<CategorySummary[]> {
   return invoke<CategorySummary[]>('get_categories', { scanId });
@@ -115,4 +115,7 @@ export function getDuplicateCandidates(afterSize: string | null = null): Promise
 }
 export function confirmDuplicates(): Promise<DuplicateGroupPage> {
   return invoke<DuplicateGroupPage>('confirm_duplicates');
+}
+export function getConfirmedDuplicates(afterId: string | null = null): Promise<DuplicateGroupPage> {
+  return invoke<DuplicateGroupPage>('get_confirmed_duplicates', { afterId });
 }

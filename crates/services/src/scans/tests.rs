@@ -189,10 +189,67 @@ fn categories_are_aggregated_from_indexed_files() {
             "5",
             Some(domain::FileCategory::Images),
             domain::FileSort::SizeDesc,
+            None,
         )
         .unwrap();
     assert_eq!(filtered.items.len(), 1);
     assert_eq!(filtered.items[0].name, "photo.JPG");
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn filtered_large_files_are_keyset_paginated_for_every_sort() {
+    let f = Fixture::new();
+    for index in 0..205 {
+        fs::write(
+            f.root.join(format!("file-{index:03}.bin")),
+            vec![0; index % 17],
+        )
+        .unwrap();
+    }
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    let session = service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    assert_eq!(wait_terminal(&rx).state, ScanState::Completed);
+
+    for sort in [
+        domain::FileSort::SizeDesc,
+        domain::FileSort::ModifiedDesc,
+        domain::FileSort::NameAsc,
+    ] {
+        let mut cursor = None;
+        let mut ids = std::collections::HashSet::new();
+        loop {
+            let page = service
+                .filtered_large_files(&session.id, "0", None, sort, cursor.as_deref())
+                .unwrap();
+            assert!(page.items.len() <= 100);
+            for entry in page.items {
+                assert!(ids.insert(entry.id));
+            }
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        assert_eq!(ids.len(), 205);
+    }
+
+    assert_eq!(
+        service
+            .filtered_large_files(
+                &session.id,
+                "0",
+                None,
+                domain::FileSort::NameAsc,
+                Some("invalid"),
+            )
+            .unwrap_err()
+            .code,
+        ErrorCode::ScanNotFound
+    );
     service.shutdown().unwrap();
 }
 
@@ -573,6 +630,39 @@ fn duplicate_confirmation_requires_matching_content_not_just_size() {
 }
 
 #[test]
+fn confirmed_duplicate_groups_are_paginated_without_losing_equal_boundaries() {
+    let f = Fixture::new();
+    for size in 1..=51 {
+        let content = vec![size as u8; size];
+        fs::write(f.root.join(format!("group-{size:02}-a")), &content).unwrap();
+        fs::write(f.root.join(format!("group-{size:02}-b")), &content).unwrap();
+    }
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    assert_eq!(wait_terminal(&rx).state, ScanState::Completed);
+
+    let first = service.confirm_duplicates().unwrap();
+    assert_eq!(first.items.len(), 50);
+    assert_eq!(first.next_cursor.as_deref(), Some("50"));
+    let second = service
+        .confirmed_duplicates(first.next_cursor.as_deref())
+        .unwrap();
+    assert_eq!(second.items.len(), 1);
+    assert!(second.next_cursor.is_none());
+    assert_eq!(
+        service
+            .confirmed_duplicates(Some("invalid"))
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidTarget
+    );
+    service.shutdown().unwrap();
+}
+
+#[test]
 fn comparison_rejects_scans_of_different_roots() {
     let f = Fixture::new();
     let other = f.root.parent().unwrap().join("other");
@@ -625,6 +715,33 @@ fn symlink_loop_is_counted_without_following() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn hardlinks_are_indexed_as_distinct_paths_with_the_documented_path_size_semantics() {
+    let f = Fixture::new();
+    let original = f.root.join("original.bin");
+    let linked = f.root.join("linked.bin");
+    fs::write(&original, [0; 13]).unwrap();
+    fs::hard_link(&original, &linked).unwrap();
+
+    let result = run_fixture(&f, Arc::new(NativeFileSystem));
+    assert_eq!(result.state, ScanState::Completed);
+    assert_eq!(result.files_count, "2");
+    assert_eq!(result.logical_size, "26");
+
+    let connection = Connection::open(&f.db).unwrap();
+    let identities = connection
+        .prepare("SELECT identity FROM entries WHERE kind='file' ORDER BY name")
+        .unwrap()
+        .query_map([], |row| row.get::<_, Option<String>>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(identities.len(), 2);
+    assert!(identities[0].is_some());
+    assert_eq!(identities[0], identities[1]);
+}
+
 struct FaultFs;
 impl FileSystemProvider for FaultFs {
     fn metadata(&self, path: &Path) -> io::Result<EntryMetadata> {
@@ -651,6 +768,7 @@ fn permission_and_disappeared_file_errors_produce_partial_result_and_do_not_stop
     assert_eq!(result.files_count, "1");
     assert_eq!(result.logical_size, "17");
     assert_eq!(result.errors_count, "2");
+    assert_eq!(result.skipped_count, "1");
     let reopened = f.service();
     let issues = reopened.issues(&result.id, None).unwrap();
     assert_eq!(issues.items.len(), 2);
@@ -816,6 +934,7 @@ fn many_errors_are_paginated_without_duplicates() {
     }
     let result = run_fixture(&f, Arc::new(Denied));
     assert_eq!(result.errors_count, "205");
+    assert_eq!(result.skipped_count, "205");
     let service = f.service();
     let mut cursor = None;
     let mut paths = std::collections::HashSet::new();
