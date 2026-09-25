@@ -9,6 +9,7 @@ use domain::{
 use filesystem::{
     native::{EntryKind, FileSystemProvider, NativeFileSystem},
     operations::{NativeTrash, TrashProvider},
+    volumes::{LocalVolumes, VolumeProvider},
     LocalPlatform,
 };
 use scanner::{DirectoryTask, EntryDraft, ScanSink};
@@ -271,6 +272,15 @@ impl ScanService {
         scan_id: &str,
         entry_ids: &[String],
     ) -> Result<DuplicateDeleteResult, AppError> {
+        self.delete_duplicate_entries_with(scan_id, entry_ids, &NativeTrash, &NativeFileSystem)
+    }
+    fn delete_duplicate_entries_with(
+        &self,
+        scan_id: &str,
+        entry_ids: &[String],
+        trash: &impl TrashProvider,
+        fs: &impl FileSystemProvider,
+    ) -> Result<DuplicateDeleteResult, AppError> {
         let unique_ids = entry_ids.iter().collect::<std::collections::BTreeSet<_>>();
         if entry_ids.is_empty() || entry_ids.len() > 100 || unique_ids.len() != entry_ids.len() {
             return Err(AppError::new(ErrorCode::InvalidTarget));
@@ -285,7 +295,7 @@ impl ScanService {
             guard(&self.shared.storage)?.duplicate_deletion_survivors(parsed_scan_id, &parsed)?;
         let mut surviving_groups = std::collections::BTreeSet::new();
         for survivor in survivors {
-            if hash_candidate_unchanged(&NativeFileSystem, &survivor) {
+            if hash_candidate_unchanged(fs, &survivor) {
                 if let Some(hash) = survivor.content_hash {
                     surviving_groups.insert(hash);
                 }
@@ -299,7 +309,7 @@ impl ScanService {
         let mut moved_entry_ids = Vec::new();
         let mut failures = Vec::new();
         for entry_id in entry_ids {
-            match self.move_to_trash(scan_id, entry_id) {
+            match self.move_to_trash_with(scan_id, entry_id, trash, fs) {
                 Ok(()) => moved_entry_ids.push(entry_id.clone()),
                 Err(error) => {
                     if error.code == ErrorCode::EntryChanged {
@@ -454,6 +464,15 @@ impl ScanService {
         scan_id: &str,
         entry_ids: &[String],
     ) -> Result<BatchOperationResult, AppError> {
+        self.move_entries_to_trash_with(scan_id, entry_ids, &NativeTrash, &NativeFileSystem)
+    }
+    fn move_entries_to_trash_with(
+        &self,
+        scan_id: &str,
+        entry_ids: &[String],
+        trash: &impl TrashProvider,
+        fs: &impl FileSystemProvider,
+    ) -> Result<BatchOperationResult, AppError> {
         let unique_ids = entry_ids.iter().collect::<std::collections::BTreeSet<_>>();
         if entry_ids.is_empty() || entry_ids.len() > 100 || unique_ids.len() != entry_ids.len() {
             return Err(AppError::new(ErrorCode::InvalidTarget));
@@ -462,7 +481,7 @@ impl ScanService {
         let mut failed_entry_ids = Vec::new();
         let mut first_error = None;
         for entry_id in entry_ids {
-            match self.move_to_trash(scan_id, entry_id) {
+            match self.move_to_trash_with(scan_id, entry_id, trash, fs) {
                 Ok(()) => moved_entry_ids.push(entry_id.clone()),
                 Err(error) => {
                     first_error.get_or_insert(error);
@@ -492,9 +511,13 @@ impl ScanService {
         if !matches!(target.kind, EntryKind::File | EntryKind::Directory) {
             return Err(AppError::new(ErrorCode::InvalidTarget));
         }
-        let current = fs
-            .metadata(&target.path)
-            .map_err(|_| AppError::new(ErrorCode::EntryChanged))?;
+        let current = fs.metadata(&target.path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                AppError::new(ErrorCode::PermissionDenied)
+            } else {
+                AppError::new(ErrorCode::EntryChanged)
+            }
+        })?;
         if current.kind != target.kind
             || current.logical_size != target.logical_size
             || target.identity.is_some() && current.identity != target.identity
@@ -699,17 +722,144 @@ fn hash_file(path: &Path, size: u64, partial: bool) -> Result<String, AppError> 
 }
 
 struct ProtectedPathPolicy;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProtectedPlatform {
+    Macos,
+    Windows,
+    Linux,
+    Unsupported,
+}
+
+impl ProtectedPlatform {
+    fn current() -> Self {
+        match std::env::consts::OS {
+            "macos" => Self::Macos,
+            "windows" => Self::Windows,
+            "linux" => Self::Linux,
+            _ => Self::Unsupported,
+        }
+    }
+}
+
 impl ProtectedPathPolicy {
     fn allows(root: &Path, path: &Path, excluded: &Path) -> Result<(), AppError> {
-        let protected = ["/System", "/bin", "/sbin", "/usr"];
-        if path == root
-            || !path.starts_with(root)
-            || path.starts_with(excluded)
-            || protected.iter().any(|prefix| path.starts_with(prefix))
-        {
+        let platform = ProtectedPlatform::current();
+        let mounts = LocalVolumes
+            .volumes()
+            .into_iter()
+            .filter_map(|volume| volume.mount_point.map(PathBuf::from))
+            .collect::<Vec<_>>();
+        let system_paths = Self::system_paths(platform);
+        Self::allows_with(platform, root, path, excluded, &mounts, &system_paths)
+    }
+
+    fn allows_with(
+        platform: ProtectedPlatform,
+        root: &Path,
+        path: &Path,
+        excluded: &Path,
+        mounts: &[PathBuf],
+        system_paths: &[PathBuf],
+    ) -> Result<(), AppError> {
+        let is_scan_root = Self::same_path(platform, path, root);
+        let outside_scan = !Self::is_within(platform, path, root);
+        let overlaps_app_data =
+            Self::is_within(platform, path, excluded) || Self::is_within(platform, excluded, path);
+        let is_mount_root = mounts
+            .iter()
+            .any(|mount| Self::same_path(platform, path, mount));
+        let is_system_path = system_paths
+            .iter()
+            .any(|system| Self::is_within(platform, path, system));
+        if is_scan_root || outside_scan || overlaps_app_data || is_mount_root || is_system_path {
             return Err(AppError::new(ErrorCode::ProtectedPath));
         }
         Ok(())
+    }
+
+    fn system_paths(platform: ProtectedPlatform) -> Vec<PathBuf> {
+        match platform {
+            ProtectedPlatform::Macos => [
+                "/System",
+                "/Library",
+                "/Applications",
+                "/bin",
+                "/sbin",
+                "/usr",
+                "/private/etc",
+                "/private/var/db",
+                "/private/var/root",
+            ]
+            .into_iter()
+            .map(PathBuf::from)
+            .collect(),
+            ProtectedPlatform::Linux => [
+                "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root", "/run",
+                "/sbin", "/sys", "/usr", "/var",
+            ]
+            .into_iter()
+            .map(PathBuf::from)
+            .collect(),
+            ProtectedPlatform::Windows => {
+                let mut paths = [
+                    r"C:\Windows",
+                    r"C:\Program Files",
+                    r"C:\Program Files (x86)",
+                    r"C:\ProgramData",
+                ]
+                .into_iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+                for variable in [
+                    "SystemRoot",
+                    "WINDIR",
+                    "ProgramFiles",
+                    "ProgramFiles(x86)",
+                    "ProgramData",
+                ] {
+                    if let Some(value) = std::env::var_os(variable) {
+                        paths.push(PathBuf::from(value));
+                    }
+                }
+                paths
+            }
+            ProtectedPlatform::Unsupported => Vec::new(),
+        }
+    }
+
+    fn same_path(platform: ProtectedPlatform, left: &Path, right: &Path) -> bool {
+        if platform == ProtectedPlatform::Windows {
+            Self::windows_path(left) == Self::windows_path(right)
+        } else {
+            left == right
+        }
+    }
+
+    fn is_within(platform: ProtectedPlatform, path: &Path, parent: &Path) -> bool {
+        if platform == ProtectedPlatform::Windows {
+            let path = Self::windows_path(path);
+            let parent = Self::windows_path(parent);
+            path == parent
+                || if parent.ends_with('\\') {
+                    path.starts_with(&parent)
+                } else {
+                    path.strip_prefix(&parent)
+                        .is_some_and(|suffix| suffix.starts_with('\\'))
+                }
+        } else {
+            path.starts_with(parent)
+        }
+    }
+
+    fn windows_path(path: &Path) -> String {
+        let normalized = path.to_string_lossy().replace('/', "\\").to_lowercase();
+        let trimmed = normalized.trim_end_matches('\\');
+        if trimmed.len() == 2 && trimmed.ends_with(':') {
+            format!("{trimmed}\\")
+        } else {
+            trimmed.to_owned()
+        }
     }
 }
 

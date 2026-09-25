@@ -30,7 +30,11 @@ mod tests {
         assert_eq!(
             info.capabilities,
             domain::Capabilities {
-                trash: cfg!(target_os = "macos"),
+                trash: cfg!(any(
+                    target_os = "macos",
+                    target_os = "windows",
+                    target_os = "linux"
+                )),
                 allocated_size: cfg!(unix),
                 duplicate_hashing: true,
                 ..Default::default()

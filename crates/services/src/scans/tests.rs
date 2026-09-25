@@ -487,6 +487,41 @@ impl TrashProvider for RecordingTrash {
         Ok(())
     }
 }
+
+struct SelectiveTrash {
+    rejected_name: &'static str,
+    paths: Mutex<Vec<PathBuf>>,
+}
+impl TrashProvider for SelectiveTrash {
+    fn move_to_trash(&self, path: &Path) -> Result<(), AppError> {
+        self.paths.lock().unwrap().push(path.to_owned());
+        if path
+            .file_name()
+            .is_some_and(|name| name == self.rejected_name)
+        {
+            Err(AppError::new(ErrorCode::PermissionDenied))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+struct MetadataDeniedFileSystem {
+    denied: PathBuf,
+}
+impl FileSystemProvider for MetadataDeniedFileSystem {
+    fn metadata(&self, path: &Path) -> io::Result<EntryMetadata> {
+        if path == self.denied {
+            Err(io::ErrorKind::PermissionDenied.into())
+        } else {
+            NativeFileSystem.metadata(path)
+        }
+    }
+
+    fn read_directory(&self, path: &Path) -> io::Result<DirectoryEntries> {
+        NativeFileSystem.read_directory(path)
+    }
+}
 impl EntryLauncher for RecordingLauncher {
     fn launch(&self, path: &Path, reveal: bool) -> Result<(), AppError> {
         self.calls.lock().unwrap().push((path.to_owned(), reveal));
@@ -622,17 +657,185 @@ fn trash_refuses_changed_and_protected_entries() {
         .code,
         ErrorCode::ProtectedPath
     );
+    assert!(trash.paths.lock().unwrap().is_empty());
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn trash_refuses_disappeared_and_permission_denied_entries_without_calling_provider() {
+    let f = Fixture::new();
+    let disappeared = f.root.join("disappeared");
+    let denied = f.root.join("denied");
+    fs::write(&disappeared, b"gone").unwrap();
+    fs::write(&denied, b"private").unwrap();
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    let session = service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    wait_terminal(&rx);
+    let root = service.root(&session.id).unwrap();
+    let entries = service.children(&session.id, &root.id, None).unwrap().items;
+    let disappeared_id = entries
+        .iter()
+        .find(|entry| entry.name == "disappeared")
+        .unwrap()
+        .id
+        .clone();
+    let denied_id = entries
+        .iter()
+        .find(|entry| entry.name == "denied")
+        .unwrap()
+        .id
+        .clone();
+    fs::remove_file(&disappeared).unwrap();
+    let trash = RecordingTrash {
+        paths: Mutex::new(vec![]),
+    };
+
     assert_eq!(
-        ProtectedPathPolicy::allows(
+        service
+            .move_to_trash_with(&session.id, &disappeared_id, &trash, &NativeFileSystem,)
+            .unwrap_err()
+            .code,
+        ErrorCode::EntryChanged
+    );
+    assert_eq!(
+        service
+            .move_to_trash_with(
+                &session.id,
+                &denied_id,
+                &trash,
+                &MetadataDeniedFileSystem {
+                    denied: denied.canonicalize().unwrap(),
+                },
+            )
+            .unwrap_err()
+            .code,
+        ErrorCode::PermissionDenied
+    );
+    assert!(trash.paths.lock().unwrap().is_empty());
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn protected_path_policy_is_platform_specific_and_covers_mounts_and_app_data() {
+    let no_mounts = Vec::new();
+    assert_eq!(
+        ProtectedPathPolicy::allows_with(
+            ProtectedPlatform::Macos,
             Path::new("/"),
-            Path::new("/System/test"),
-            Path::new("/state")
+            Path::new("/System/Library/kernel"),
+            Path::new("/Users/me/Library/Application Support/App"),
+            &no_mounts,
+            &ProtectedPathPolicy::system_paths(ProtectedPlatform::Macos),
         )
         .unwrap_err()
         .code,
         ErrorCode::ProtectedPath
     );
-    assert!(trash.paths.lock().unwrap().is_empty());
+    assert_eq!(
+        ProtectedPathPolicy::allows_with(
+            ProtectedPlatform::Linux,
+            Path::new("/"),
+            Path::new("/etc/passwd"),
+            Path::new("/home/me/.local/share/app"),
+            &no_mounts,
+            &ProtectedPathPolicy::system_paths(ProtectedPlatform::Linux),
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::ProtectedPath
+    );
+    assert_eq!(
+        ProtectedPathPolicy::allows_with(
+            ProtectedPlatform::Windows,
+            Path::new(r"c:\"),
+            Path::new(r"C:\WINDOWS\System32"),
+            Path::new(r"C:\Users\me\AppData\Local\App"),
+            &no_mounts,
+            &ProtectedPathPolicy::system_paths(ProtectedPlatform::Windows),
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::ProtectedPath
+    );
+    assert_eq!(
+        ProtectedPathPolicy::allows_with(
+            ProtectedPlatform::Macos,
+            Path::new("/"),
+            Path::new("/Volumes/External"),
+            Path::new("/Users/me/Library/Application Support/App"),
+            &[PathBuf::from("/Volumes/External")],
+            &[],
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::ProtectedPath
+    );
+    assert_eq!(
+        ProtectedPathPolicy::allows_with(
+            ProtectedPlatform::Linux,
+            Path::new("/home/me"),
+            Path::new("/home/me/.local/share"),
+            Path::new("/home/me/.local/share/app/state"),
+            &no_mounts,
+            &[],
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::ProtectedPath
+    );
+    assert!(ProtectedPathPolicy::allows_with(
+        ProtectedPlatform::Linux,
+        Path::new("/home/me"),
+        Path::new("/home/me/Downloads/file"),
+        Path::new("/home/me/.local/share/app"),
+        &no_mounts,
+        &ProtectedPathPolicy::system_paths(ProtectedPlatform::Linux),
+    )
+    .is_ok());
+}
+
+#[test]
+fn batch_trash_reports_partial_failure_and_reconciles_only_successes() {
+    let f = Fixture::new();
+    fs::write(f.root.join("accepted"), b"one").unwrap();
+    fs::write(f.root.join("rejected"), b"two").unwrap();
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    let session = service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    wait_terminal(&rx);
+    let root = service.root(&session.id).unwrap();
+    let entries = service.children(&session.id, &root.id, None).unwrap().items;
+    let ids = entries
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect::<Vec<_>>();
+    let trash = SelectiveTrash {
+        rejected_name: "rejected",
+        paths: Mutex::new(vec![]),
+    };
+
+    let result = service
+        .move_entries_to_trash_with(&session.id, &ids, &trash, &NativeFileSystem)
+        .unwrap();
+    assert_eq!(result.moved_entry_ids.len(), 1);
+    assert_eq!(result.failed_entry_ids.len(), 1);
+    let remaining = service.children(&session.id, &root.id, None).unwrap();
+    assert_eq!(remaining.items.len(), 1);
+    assert_eq!(remaining.items[0].name, "rejected");
+    assert_eq!(
+        service
+            .get_scan(Some(&session.id))
+            .unwrap()
+            .unwrap()
+            .logical_size,
+        "3"
+    );
+    assert_eq!(trash.paths.lock().unwrap().len(), 2);
     service.shutdown().unwrap();
 }
 
@@ -810,6 +1013,53 @@ fn duplicate_confirmation_requires_matching_content_not_just_size() {
             .code,
         ErrorCode::EntryChanged
     );
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn duplicate_batch_deletion_preserves_failed_copy_and_reconciles_successes() {
+    let f = Fixture::new();
+    for name in ["accepted", "rejected", "survivor"] {
+        fs::write(f.root.join(name), b"identical-content").unwrap();
+    }
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    wait_terminal(&rx);
+    let groups = service.confirm_duplicates().unwrap();
+    let scan_id = groups.scan_id.as_deref().unwrap();
+    let hash = &groups.items[0].content_hash;
+    let files = service.duplicate_files(scan_id, hash, None).unwrap();
+    let selected = ["accepted", "rejected"]
+        .into_iter()
+        .map(|name| {
+            files
+                .items
+                .iter()
+                .find(|entry| entry.name == name)
+                .unwrap()
+                .id
+                .clone()
+        })
+        .collect::<Vec<_>>();
+    let trash = SelectiveTrash {
+        rejected_name: "rejected",
+        paths: Mutex::new(vec![]),
+    };
+
+    let result = service
+        .delete_duplicate_entries_with(scan_id, &selected, &trash, &NativeFileSystem)
+        .unwrap();
+    assert_eq!(result.moved_entry_ids, vec![selected[0].clone()]);
+    assert_eq!(result.failures.len(), 1);
+    assert_eq!(result.failures[0].entry_id, selected[1]);
+    assert_eq!(result.failures[0].code, ErrorCode::PermissionDenied);
+    let remaining = service.duplicate_files(scan_id, hash, None).unwrap();
+    assert_eq!(remaining.items.len(), 2);
+    assert!(remaining.items.iter().any(|entry| entry.name == "rejected"));
+    assert!(remaining.items.iter().any(|entry| entry.name == "survivor"));
     service.shutdown().unwrap();
 }
 
