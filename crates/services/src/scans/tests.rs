@@ -728,6 +728,29 @@ fn hardlinks_are_indexed_as_distinct_paths_with_the_documented_path_size_semanti
     assert_eq!(result.state, ScanState::Completed);
     assert_eq!(result.files_count, "2");
     assert_eq!(result.logical_size, "26");
+    assert_eq!(
+        result.unique_allocated_size,
+        NativeFileSystem
+            .metadata(&original)
+            .unwrap()
+            .allocated_size
+            .map(|value| value.to_string())
+    );
+    assert_eq!(
+        result
+            .allocated_size
+            .as_deref()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap(),
+        result
+            .unique_allocated_size
+            .as_deref()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+            * 2
+    );
 
     let connection = Connection::open(&f.db).unwrap();
     let identities = connection
@@ -740,6 +763,76 @@ fn hardlinks_are_indexed_as_distinct_paths_with_the_documented_path_size_semanti
     assert_eq!(identities.len(), 2);
     assert!(identities[0].is_some());
     assert_eq!(identities[0], identities[1]);
+}
+
+#[cfg(unix)]
+#[test]
+fn sparse_file_reports_logical_and_allocated_sizes_separately() {
+    let f = Fixture::new();
+    let sparse = f.root.join("sparse.bin");
+    fs::File::create(&sparse)
+        .unwrap()
+        .set_len(1024 * 1024 * 1024)
+        .unwrap();
+    let native = NativeFileSystem.metadata(&sparse).unwrap();
+    assert_eq!(native.logical_size, 1024 * 1024 * 1024);
+    assert!(native.allocated_size.unwrap() < native.logical_size);
+
+    let result = run_fixture(&f, Arc::new(NativeFileSystem));
+    assert_eq!(result.logical_size, native.logical_size.to_string());
+    assert_eq!(result.allocated_size, result.unique_allocated_size);
+    assert_eq!(
+        result.allocated_size,
+        native.allocated_size.map(|value| value.to_string())
+    );
+}
+
+#[test]
+fn managed_faults_cover_disappearing_root_disconnect_and_directory_mutation() {
+    use filesystem::fault::{FaultInjectingFileSystem, FaultOperation, FaultRule, FileSystemFault};
+
+    for fault in [
+        FileSystemFault::FileDisappeared,
+        FileSystemFault::VolumeDisconnected,
+    ] {
+        let f = Fixture::new();
+        let operation = if fault == FileSystemFault::FileDisappeared {
+            FaultOperation::Metadata
+        } else {
+            FaultOperation::ReadDirectory
+        };
+        let occurrence = 1;
+        let provider = FaultInjectingFileSystem::new(
+            Arc::new(NativeFileSystem),
+            vec![FaultRule::new(
+                f.root.canonicalize().unwrap(),
+                operation,
+                occurrence,
+                fault,
+            )],
+        );
+        let result = run_fixture(&f, Arc::new(provider));
+        assert_eq!(result.state, ScanState::Failed);
+        assert_eq!(result.failure.unwrap().code, ErrorCode::InvalidTarget);
+    }
+
+    let f = Fixture::new();
+    let changing = f.root.join("changing");
+    fs::create_dir(&changing).unwrap();
+    fs::write(changing.join("unseen"), b"data").unwrap();
+    let provider = FaultInjectingFileSystem::new(
+        Arc::new(NativeFileSystem),
+        vec![FaultRule::new(
+            changing.canonicalize().unwrap(),
+            FaultOperation::Metadata,
+            2,
+            FileSystemFault::MetadataChanged,
+        )],
+    );
+    let result = run_fixture(&f, Arc::new(provider));
+    assert_eq!(result.state, ScanState::Partial);
+    assert_eq!(result.files_count, "0");
+    assert_eq!(result.errors_count, "1");
 }
 
 struct FaultFs;

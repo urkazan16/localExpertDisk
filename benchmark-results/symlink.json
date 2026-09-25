@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "profile": "SYMLINK",
+  "root": "/private/tmp/local-expert-disk-gate.XI20kp/symlink",
+  "started_at_ms": 1790326148633,
+  "fixture_generation_ms": null,
+  "duration_ms": 7,
+  "entries_per_second": 13116.222079797311,
+  "peak_rss_bytes": 4255744,
+  "batch_commits": 2,
+  "ipc_progress_events": 2,
+  "state": "completed",
+  "counts": {
+    "files": "100",
+    "directories": "2",
+    "symlinks": "1",
+    "skipped": "0",
+    "errors": "0"
+  },
+  "sizes": {
+    "logical_bytes": "0",
+    "allocated_bytes": "0",
+    "unique_allocated_bytes": "0",
+    "sqlite_bytes": 337656
+  }
+}

@@ -9,6 +9,7 @@ use std::{
 };
 
 pub const BATCH_SIZE: usize = 256;
+pub mod fault;
 #[derive(Debug)]
 pub struct DirectoryTask {
     pub id: i64,
@@ -356,6 +357,38 @@ mod tests {
             .code,
             ErrorCode::StorageUnavailable
         );
+    }
+
+    #[test]
+    fn managed_persistence_faults_stop_before_a_batch_is_reported_committed() {
+        use crate::fault::{FaultInjectingSink, PersistenceFault};
+
+        for fault in [PersistenceFault::DiskFull, PersistenceFault::DatabaseBusy] {
+            let sink = Sink {
+                queued: true,
+                total: Totals::default(),
+                max_batch: 0,
+                writes: 0,
+                issue_codes: vec![],
+            };
+            let mut sink = FaultInjectingSink::new(sink, fault, 1);
+            let error = scan(
+                &Synthetic { entries: 1 },
+                &mut sink,
+                &AtomicBool::new(false),
+                Path::new("excluded"),
+                || {},
+            )
+            .unwrap_err();
+            assert_eq!(
+                error.code,
+                match fault {
+                    PersistenceFault::DiskFull => ErrorCode::DiskFull,
+                    PersistenceFault::DatabaseBusy => ErrorCode::DatabaseBusy,
+                }
+            );
+            assert_eq!(sink.into_inner().writes, 0);
+        }
     }
 
     struct DeniedRoot;

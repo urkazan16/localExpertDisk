@@ -61,12 +61,12 @@ fn read_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanSession> {
     let state = serde_json::from_value(serde_json::Value::String(state)).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(e))
     })?;
-    let failure: Option<String> = row.get(12)?;
+    let failure: Option<String> = row.get(13)?;
     let failure = failure
         .map(|text| serde_json::from_str(&text))
         .transpose()
         .map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(12, rusqlite::types::Type::Text, Box::new(e))
+            rusqlite::Error::FromSqlConversionFailure(13, rusqlite::types::Type::Text, Box::new(e))
         })?;
     Ok(ScanSession {
         id: row.get::<_, i64>(0)?.to_string(),
@@ -78,9 +78,10 @@ fn read_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanSession> {
         skipped_count: row.get::<_, i64>(6)?.to_string(),
         logical_size: row.get::<_, i64>(7)?.to_string(),
         allocated_size: row.get::<_, Option<i64>>(8)?.map(|value| value.to_string()),
-        errors_count: row.get::<_, i64>(9)?.to_string(),
-        started_at_ms: row.get::<_, i64>(10)?.to_string(),
-        finished_at_ms: row.get::<_, Option<i64>>(11)?.map(|n| n.to_string()),
+        unique_allocated_size: row.get::<_, Option<i64>>(9)?.map(|value| value.to_string()),
+        errors_count: row.get::<_, i64>(10)?.to_string(),
+        started_at_ms: row.get::<_, i64>(11)?.to_string(),
+        finished_at_ms: row.get::<_, Option<i64>>(12)?.map(|n| n.to_string()),
         failure,
     })
 }
@@ -171,7 +172,7 @@ fn parse_name_cursor(cursor: Option<&str>) -> Result<Option<(String, i64)>, AppE
         })
         .transpose()
 }
-const SELECT_SESSION: &str = "SELECT id,root_display,state,files_count,directories_count,symlinks_count,skipped_count,logical_size,allocated_size,errors_count,started_at_ms,finished_at_ms,failure FROM scan_sessions";
+const SELECT_SESSION: &str = "SELECT id,root_display,state,files_count,directories_count,symlinks_count,skipped_count,logical_size,allocated_size,unique_allocated_size,errors_count,started_at_ms,finished_at_ms,failure FROM scan_sessions";
 const FILE_CATEGORY_SQL: &str = "CASE
  WHEN lower(name) GLOB '*.mp4' OR lower(name) GLOB '*.mkv' OR lower(name) GLOB '*.mov' OR lower(name) GLOB '*.avi' OR lower(name) GLOB '*.webm' THEN 'video'
  WHEN lower(name) GLOB '*.jpg' OR lower(name) GLOB '*.jpeg' OR lower(name) GLOB '*.png' OR lower(name) GLOB '*.gif' OR lower(name) GLOB '*.heic' OR lower(name) GLOB '*.webp' THEN 'images'
@@ -419,8 +420,8 @@ impl SqliteStorage {
         )
         .map_err(storage_error)?;
         tx.execute(
-            "UPDATE scan_sessions SET directories_count=1 WHERE id=?1",
-            [scan_id],
+            "UPDATE scan_sessions SET directories_count=1,unique_allocated_size=?2 WHERE id=?1",
+            params![scan_id, cfg!(unix).then_some(0_i64)],
         )
         .map_err(storage_error)?;
         tx.commit().map_err(storage_error)
@@ -448,8 +449,41 @@ impl SqliteStorage {
     ) -> Result<(), AppError> {
         let tx = self.connection.transaction().map_err(storage_error)?;
         let mut direct = aggregate(&tx, parent)?;
+        let mut unique_allocated: Option<i64> = tx
+            .query_row(
+                "SELECT unique_allocated_size FROM scan_sessions WHERE id=?1",
+                [scan_id],
+                |row| row.get(0),
+            )
+            .map_err(storage_error)?;
         for entry in entries {
             let m = &entry.metadata;
+            if m.kind == EntryKind::File {
+                unique_allocated = match (unique_allocated, m.allocated_size) {
+                    (Some(total), Some(size)) => {
+                        let already_seen = match &m.identity {
+                            Some(identity) => tx
+                                .execute(
+                                    "INSERT OR IGNORE INTO scan_file_identities(scan_id,identity,allocated_size) VALUES (?1,?2,?3)",
+                                    params![scan_id, identity, integer(size)?],
+                                )
+                                .map_err(storage_error)?
+                                == 0,
+                            None => false,
+                        };
+                        if already_seen {
+                            Some(total)
+                        } else {
+                            Some(
+                                total
+                                    .checked_add(integer(size)?)
+                                    .ok_or_else(|| AppError::new(ErrorCode::SizeOverflow))?,
+                            )
+                        }
+                    }
+                    _ => None,
+                };
+            }
             tx.execute("INSERT INTO entries(scan_id,parent_id,path,name,kind,logical_size,allocated_size,created_at_ms,modified_at_ms,accessed_at_ms,identity) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)", params![scan_id,parent,encode_path(&entry.path),entry.path.file_name().unwrap_or_default().to_string_lossy(),m.kind.as_str(),integer(m.logical_size)?,m.allocated_size.map(integer).transpose()?,m.created_at_ms,m.modified_at_ms,m.accessed_at_ms,m.identity]).map_err(storage_error)?;
             if m.kind == EntryKind::Directory {
                 let id = tx.last_insert_rowid();
@@ -483,7 +517,7 @@ impl SqliteStorage {
             .map_err(storage_error)?;
         }
         let allocated_size = totals.allocated.map(integer).transpose()?;
-        tx.execute("UPDATE scan_sessions SET files_count=?2,directories_count=?3,symlinks_count=?4,skipped_count=?5,logical_size=?6,allocated_size=?7,errors_count=?8 WHERE id=?1", params![scan_id,integer(totals.files)?,integer(totals.directories)?,integer(totals.symlinks)?,integer(totals.skipped)?,integer(totals.logical)?,allocated_size,integer(totals.errors)?]).map_err(storage_error)?;
+        tx.execute("UPDATE scan_sessions SET files_count=?2,directories_count=?3,symlinks_count=?4,skipped_count=?5,logical_size=?6,allocated_size=?7,errors_count=?8,unique_allocated_size=?9 WHERE id=?1", params![scan_id,integer(totals.files)?,integer(totals.directories)?,integer(totals.symlinks)?,integer(totals.skipped)?,integer(totals.logical)?,allocated_size,integer(totals.errors)?,unique_allocated]).map_err(storage_error)?;
         tx.commit().map_err(storage_error)
     }
     pub fn finish_directory(&mut self, id: i64) -> Result<(), AppError> {
@@ -997,9 +1031,35 @@ impl SqliteStorage {
             tx.execute("DELETE FROM entries WHERE id=?1", [id])
                 .map_err(storage_error)?;
         }
+        let unique_allocated: Option<i64> = tx
+            .query_row(
+                "SELECT CASE
+                   WHEN EXISTS(SELECT 1 FROM entries WHERE scan_id=?1 AND kind='file' AND allocated_size IS NULL) THEN NULL
+                   ELSE COALESCE(SUM(allocated_size),0)
+                 END
+                 FROM entries e
+                 WHERE scan_id=?1 AND kind='file'
+                   AND (identity IS NULL OR id=(SELECT MIN(first.id) FROM entries first WHERE first.scan_id=e.scan_id AND first.kind='file' AND first.identity=e.identity))",
+                [scan_id],
+                |row| row.get(0),
+            )
+            .map_err(storage_error)?;
         tx.execute(
-            "UPDATE scan_sessions SET files_count=files_count-?2,directories_count=directories_count-?3,symlinks_count=symlinks_count-?4,logical_size=logical_size-?5,allocated_size=CASE WHEN allocated_size IS NULL OR ?6 IS NULL THEN NULL ELSE allocated_size-?6 END WHERE id=?1",
-            params![scan_id, files, directories, symlinks, logical, allocated],
+            "DELETE FROM scan_file_identities WHERE scan_id=?1",
+            [scan_id],
+        )
+        .map_err(storage_error)?;
+        tx.execute(
+            "INSERT INTO scan_file_identities(scan_id,identity,allocated_size)
+             SELECT ?1,identity,MAX(allocated_size) FROM entries
+             WHERE scan_id=?1 AND kind='file' AND identity IS NOT NULL AND allocated_size IS NOT NULL
+             GROUP BY identity",
+            [scan_id],
+        )
+        .map_err(storage_error)?;
+        tx.execute(
+            "UPDATE scan_sessions SET files_count=files_count-?2,directories_count=directories_count-?3,symlinks_count=symlinks_count-?4,logical_size=logical_size-?5,allocated_size=CASE WHEN allocated_size IS NULL OR ?6 IS NULL THEN NULL ELSE allocated_size-?6 END,unique_allocated_size=?7 WHERE id=?1",
+            params![scan_id, files, directories, symlinks, logical, allocated, unique_allocated],
         ).map_err(storage_error)?;
         tx.commit().map_err(storage_error)
     }

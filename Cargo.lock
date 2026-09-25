@@ -860,6 +860,7 @@ version = "0.1.0"
 dependencies = [
  "domain",
  "sysinfo",
+ "tempfile",
 ]
 
 [[package]]
@@ -2715,6 +2716,20 @@ dependencies = [
  "analyzer",
  "domain",
  "filesystem",
+]
+
+[[package]]
+name = "scanner-benchmark"
+version = "0.1.0"
+dependencies = [
+ "domain",
+ "filesystem",
+ "fixture-generator",
+ "libc",
+ "serde",
+ "serde_json",
+ "services",
+ "tempfile",
 ]
 
 [[package]]

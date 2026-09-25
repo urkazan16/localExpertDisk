@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "profile": "MUTATING",
+  "root": "/private/tmp/local-expert-disk-gate.XI20kp/mutating",
+  "started_at_ms": 1790326149939,
+  "fixture_generation_ms": null,
+  "duration_ms": 16,
+  "entries_per_second": 6120.3571840452605,
+  "peak_rss_bytes": 4661248,
+  "batch_commits": 2,
+  "ipc_progress_events": 2,
+  "state": "partial",
+  "counts": {
+    "files": "100",
+    "directories": "2",
+    "symlinks": "0",
+    "skipped": "0",
+    "errors": "1"
+  },
+  "sizes": {
+    "logical_bytes": "0",
+    "allocated_bytes": "0",
+    "unique_allocated_bytes": "0",
+    "sqlite_bytes": 354136
+  }
+}

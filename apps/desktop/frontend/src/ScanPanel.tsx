@@ -368,6 +368,14 @@ export function ScanPanel({
                 </dd>
               </div>
             )}
+            {scan.unique_allocated_size !== null && (
+              <div>
+                <dt>Уникально занято на диске</dt>
+                <dd title={`${formatCount(scan.unique_allocated_size)} байт`}>
+                  {formatBytes(scan.unique_allocated_size)}
+                </dd>
+              </div>
+            )}
             <div>
               <dt>Ссылки</dt>
               <dd>{formatCount(scan.symlinks_count)}</dd>
@@ -385,7 +393,8 @@ export function ScanPanel({
             {scan.allocated_size === null
               ? "Физический размер на диске недоступен на этой платформе."
               : "Физический размер подсчитан по блокам файловой системы."}{" "}
-            Жёсткие ссылки считаются по каждому пути.
+            Общий размер считает жёсткие ссылки по каждому пути, уникальный —
+            один раз.
           </p>
           {isTerminal(scan) && BigInt(scan.errors_count) > 0n && (
             <button

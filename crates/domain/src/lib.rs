@@ -6,6 +6,8 @@ use ts_rs::TS;
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     StorageUnavailable,
+    DiskFull,
+    DatabaseBusy,
     UnsupportedSchema,
     InvalidSchema,
     Internal,
@@ -92,6 +94,8 @@ impl AppError {
     pub fn new(code: ErrorCode) -> Self {
         let key = match code {
             ErrorCode::StorageUnavailable => "storage_unavailable",
+            ErrorCode::DiskFull => "disk_full",
+            ErrorCode::DatabaseBusy => "database_busy",
             ErrorCode::UnsupportedSchema => "unsupported_schema",
             ErrorCode::InvalidSchema => "invalid_schema",
             ErrorCode::Internal => "internal",
@@ -185,6 +189,8 @@ pub struct ScanSession {
     pub logical_size: String,
     /// None when the current platform cannot report allocated filesystem blocks.
     pub allocated_size: Option<String>,
+    /// Allocated blocks counted once per stable file identity (hardlinks are deduplicated).
+    pub unique_allocated_size: Option<String>,
     pub errors_count: String,
     pub started_at_ms: String,
     pub finished_at_ms: Option<String>,

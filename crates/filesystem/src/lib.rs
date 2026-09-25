@@ -28,6 +28,7 @@ impl PlatformProvider for LocalPlatform {
     }
 }
 
+pub mod fault;
 pub mod native;
 pub mod operations;
 pub mod snapshots;

@@ -17,7 +17,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, MutexGuard,
     },
     thread::JoinHandle,
@@ -46,6 +46,22 @@ struct Shared {
 #[derive(Clone)]
 pub struct ScanService {
     shared: Arc<Shared>,
+}
+
+#[derive(Default)]
+pub struct ScanInstrumentation {
+    batch_commits: AtomicU64,
+    progress_events: AtomicU64,
+}
+
+impl ScanInstrumentation {
+    pub fn batch_commits(&self) -> u64 {
+        self.batch_commits.load(Ordering::Acquire)
+    }
+
+    pub fn progress_events(&self) -> u64 {
+        self.progress_events.load(Ordering::Acquire)
+    }
 }
 
 trait EntryLauncher {
@@ -384,10 +400,25 @@ impl ScanService {
     ) -> Result<ScanSession, AppError> {
         self.start_with(request, Arc::new(NativeFileSystem), progress)
     }
-    fn start_with(
+    pub fn start_with(
         &self,
         request: StartScanRequest,
         fs: Arc<dyn FileSystemProvider>,
+        progress: impl Fn(ScanSession) -> bool + Send + Sync + 'static,
+    ) -> Result<ScanSession, AppError> {
+        self.start_instrumented(
+            request,
+            fs,
+            Arc::new(ScanInstrumentation::default()),
+            progress,
+        )
+    }
+
+    pub fn start_instrumented(
+        &self,
+        request: StartScanRequest,
+        fs: Arc<dyn FileSystemProvider>,
+        instrumentation: Arc<ScanInstrumentation>,
         progress: impl Fn(ScanSession) -> bool + Send + Sync + 'static,
     ) -> Result<ScanSession, AppError> {
         let root = PathBuf::from(&request.root_path);
@@ -402,7 +433,11 @@ impl ScanService {
             return Err(AppError::new(ErrorCode::ScanBusy));
         }
         if let Some(active) = job.as_ref() {
-            if !active.handle.is_finished() {
+            let terminal = guard(&self.shared.storage)?
+                .get_scan(active.id)?
+                .state
+                .is_terminal();
+            if !active.handle.is_finished() && !terminal {
                 return Err(AppError::new(ErrorCode::ScanBusy));
             }
         }
@@ -415,6 +450,7 @@ impl ScanService {
         let worker_cancel = Arc::clone(&cancel);
         let shared = Arc::clone(&self.shared);
         let initial = session.clone();
+        let worker_instrumentation = Arc::clone(&instrumentation);
         let handle = std::thread::Builder::new().name(format!("scan-{id}")).spawn(move || {
             let mut last_progress = Instant::now() - Duration::from_secs(1);
             let mut publish = || {
@@ -422,12 +458,15 @@ impl ScanService {
                     if let Ok(storage) = guard(&shared.storage) {
                         let update = storage.get_scan(id);
                         drop(storage);
-                        if let Ok(update) = update { if !progress(update) { worker_cancel.store(true, Ordering::Release); } }
+                        if let Ok(update) = update {
+                            worker_instrumentation.progress_events.fetch_add(1, Ordering::AcqRel);
+                            if !progress(update) { worker_cancel.store(true, Ordering::Release); }
+                        }
                     }
                     last_progress = Instant::now();
                 }
             };
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&shared,id,&root,fs.as_ref(),&worker_cancel,&mut publish))).unwrap_or_else(|_| Err(internal()));
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&shared,id,&root,fs.as_ref(),&worker_cancel,&worker_instrumentation,&mut publish))).unwrap_or_else(|_| Err(internal()));
             let result = finalize(&shared,id,&worker_cancel,outcome);
             let final_session = result.unwrap_or_else(|error| {
                 tracing::error!(component="scanner",scan_id=id,code=?error.code,"Unable to persist final scan state");
@@ -436,6 +475,7 @@ impl ScanService {
                 failed.failure = Some(error);
                 failed
             });
+            worker_instrumentation.progress_events.fetch_add(1, Ordering::AcqRel);
             let _ = progress(final_session);
         });
         match handle {
@@ -537,6 +577,7 @@ struct Writer<'a> {
     shared: &'a Shared,
     id: i64,
     cancel: &'a AtomicBool,
+    instrumentation: &'a ScanInstrumentation,
 }
 impl ScanSink for Writer<'_> {
     fn next_directory(&mut self) -> Result<Option<DirectoryTask>, AppError> {
@@ -553,7 +594,11 @@ impl ScanSink for Writer<'_> {
         if self.cancel.load(Ordering::Acquire) {
             return Ok(());
         }
-        storage.write_scan_batch(self.id, parent, entries, issues, totals)
+        storage.write_scan_batch(self.id, parent, entries, issues, totals)?;
+        self.instrumentation
+            .batch_commits
+            .fetch_add(1, Ordering::AcqRel);
+        Ok(())
     }
     fn finish_directory(&mut self, id: i64) -> Result<(), AppError> {
         let mut storage = guard(&self.shared.storage)?;
@@ -569,6 +614,7 @@ fn run(
     root: &Path,
     fs: &dyn FileSystemProvider,
     cancel: &AtomicBool,
+    instrumentation: &ScanInstrumentation,
     publish: &mut impl FnMut(),
 ) -> Result<ScanState, AppError> {
     {
@@ -599,7 +645,12 @@ fn run(
         storage.seed_root(id, &root, &metadata)?;
         storage.transition(id, ScanState::Scanning, None)?;
     }
-    let mut writer = Writer { shared, id, cancel };
+    let mut writer = Writer {
+        shared,
+        id,
+        cancel,
+        instrumentation,
+    };
     scanner::scan(fs, &mut writer, cancel, &shared.excluded, publish)
 }
 fn finalize(

@@ -8,3 +8,6 @@ publish.workspace = true
 [dependencies]
 domain.workspace = true
 sysinfo = { version = "0.38.4", default-features = false, features = ["disk"] }
+
+[dev-dependencies]
+tempfile.workspace = true

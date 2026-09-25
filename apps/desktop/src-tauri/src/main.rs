@@ -395,7 +395,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let storage = ScanService::open(&directory.path().join("ipc.db")).unwrap();
         let response = invoke(AppState(Ok(storage))).unwrap();
-        assert_eq!(response.schema_version, 9);
+        assert_eq!(response.schema_version, 10);
         assert_eq!(response.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(
             response.capabilities,

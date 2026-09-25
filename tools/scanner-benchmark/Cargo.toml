@@ -1,0 +1,16 @@
+[package]
+name = "scanner-benchmark"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+domain.workspace = true
+filesystem.workspace = true
+fixture-generator = { path = "../fixture-generator" }
+services.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+libc = "0.2"

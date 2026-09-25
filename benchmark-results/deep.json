@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "profile": "DEEP",
+  "root": "/private/tmp/local-expert-disk-gate.XI20kp/deep-120",
+  "started_at_ms": 1790326176714,
+  "fixture_generation_ms": null,
+  "duration_ms": 66,
+  "entries_per_second": 1847.5929649717577,
+  "peak_rss_bytes": 4292608,
+  "batch_commits": 121,
+  "ipc_progress_events": 2,
+  "state": "completed",
+  "counts": {
+    "files": "1",
+    "directories": "121",
+    "symlinks": "0",
+    "skipped": "0",
+    "errors": "0"
+  },
+  "sizes": {
+    "logical_bytes": "1",
+    "allocated_bytes": "4096",
+    "unique_allocated_bytes": "4096",
+    "sqlite_bytes": 4320952
+  }
+}

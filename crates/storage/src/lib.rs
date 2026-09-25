@@ -37,6 +37,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "entry_allocated_size",
         include_str!("../migrations/0009_entry_allocated_size.sql"),
     ),
+    (
+        "unique_allocated_size",
+        include_str!("../migrations/0010_unique_allocated_size.sql"),
+    ),
 ];
 
 pub trait StorageStatus {
@@ -132,6 +136,14 @@ impl SqliteStorage {
         connection
             .busy_timeout(Duration::from_secs(5))
             .map_err(storage_error)?;
+        // Scan data is reconstructible. WAL keeps batch commits atomic while NORMAL avoids
+        // a full filesystem sync for every bounded scanner batch.
+        connection
+            .pragma_update(None, "journal_mode", "WAL")
+            .map_err(storage_error)?;
+        connection
+            .pragma_update(None, "synchronous", "NORMAL")
+            .map_err(storage_error)?;
         connection
             .pragma_update(None, "foreign_keys", true)
             .map_err(storage_error)?;
@@ -159,7 +171,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.db");
         let db = SqliteStorage::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 9);
+        assert_eq!(db.schema_version().unwrap(), 10);
         db.connection
             .execute_batch(
                 "CREATE TABLE marker(value TEXT); INSERT INTO marker VALUES ('preserved');",
@@ -167,7 +179,7 @@ mod tests {
             .unwrap();
         drop(db);
         let db = SqliteStorage::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 9);
+        assert_eq!(db.schema_version().unwrap(), 10);
         let marker: String = db
             .connection
             .query_row("SELECT value FROM marker", [], |row| row.get(0))
@@ -192,7 +204,6 @@ mod tests {
     #[test]
     fn failed_migration_rolls_back_ddl_and_version() {
         let mut connection = Connection::open_in_memory().unwrap();
-        migrate(&mut connection, MIGRATIONS).unwrap();
         let migrations = [
             MIGRATIONS[0],
             MIGRATIONS[1],
@@ -202,14 +213,11 @@ mod tests {
         let version: u32 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9);
+        assert_eq!(version, 0);
         assert!(connection.prepare("SELECT * FROM partial").is_err());
-        let count: u32 = connection
-            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(count, 9);
+        assert!(connection
+            .prepare("SELECT COUNT(*) FROM schema_migrations")
+            .is_err());
     }
 
     #[test]
@@ -237,6 +245,95 @@ mod tests {
         assert_eq!(error.code, ErrorCode::StorageUnavailable);
         let bytes = std::fs::read(&path).unwrap();
         assert_eq!(bytes, b"not a sqlite database");
+    }
+
+    #[test]
+    fn failed_batch_commit_rolls_back_and_restart_marks_scan_interrupted() {
+        use analyzer::Totals;
+        use filesystem::native::{EntryKind, EntryMetadata};
+        use scanner::EntryDraft;
+
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("commit.db");
+        let root = directory.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let file = root.join("file");
+        std::fs::write(&file, b"payload").unwrap();
+        let root_metadata = EntryMetadata {
+            kind: EntryKind::Directory,
+            logical_size: 0,
+            allocated_size: None,
+            created_at_ms: None,
+            modified_at_ms: None,
+            accessed_at_ms: None,
+            identity: Some("root".into()),
+        };
+        let file_metadata = EntryMetadata {
+            kind: EntryKind::File,
+            logical_size: 7,
+            allocated_size: Some(4096),
+            created_at_ms: None,
+            modified_at_ms: None,
+            accessed_at_ms: None,
+            identity: Some("file".into()),
+        };
+        let mut storage = SqliteStorage::open(&database).unwrap();
+        let scan = storage.create_scan(&root).unwrap();
+        let scan_id = scans::parse_id(&scan.id).unwrap();
+        storage
+            .transition(scan_id, domain::ScanState::Preparing, None)
+            .unwrap();
+        storage.seed_root(scan_id, &root, &root_metadata).unwrap();
+        storage
+            .transition(scan_id, domain::ScanState::Scanning, None)
+            .unwrap();
+        let parent = storage.next_directory(scan_id).unwrap().unwrap().id;
+        storage
+            .connection
+            .execute_batch(
+                "CREATE TRIGGER interrupt_batch BEFORE UPDATE OF files_count ON scan_sessions
+                 BEGIN SELECT RAISE(ABORT, 'injected commit interruption'); END;",
+            )
+            .unwrap();
+        assert!(storage
+            .write_scan_batch(
+                scan_id,
+                parent,
+                &[EntryDraft {
+                    path: file,
+                    metadata: file_metadata,
+                }],
+                &[],
+                Totals {
+                    files: 1,
+                    directories: 1,
+                    logical: 7,
+                    allocated: Some(4096),
+                    ..Default::default()
+                },
+            )
+            .is_err());
+        let entries: i64 = storage
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM entries WHERE scan_id=?1",
+                [scan_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(entries, 1, "the entire failed batch must roll back");
+        storage
+            .connection
+            .execute_batch("DROP TRIGGER interrupt_batch")
+            .unwrap();
+        drop(storage);
+
+        let mut reopened = SqliteStorage::open(&database).unwrap();
+        reopened.recover_scans().unwrap();
+        let recovered = reopened.get_scan(scan_id).unwrap();
+        assert_eq!(recovered.state, domain::ScanState::Interrupted);
+        assert_eq!(recovered.files_count, "0");
+        assert_eq!(recovered.unique_allocated_size.as_deref(), Some("0"));
     }
 }
 

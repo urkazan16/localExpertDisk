@@ -15,6 +15,7 @@ const scan: ScanSession = {
   skipped_count: "0",
   logical_size: "20",
   allocated_size: null,
+  unique_allocated_size: null,
   errors_count: "0",
   started_at_ms: "1",
   finished_at_ms: "2",
