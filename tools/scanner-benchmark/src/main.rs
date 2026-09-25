@@ -1,5 +1,5 @@
 //! Scanner Gate benchmark runner. Writes one self-contained JSON result per run.
-use domain::{ScanSession, StartScanRequest};
+use domain::{DirectoryMapMetric, DirectoryMapNode, ScanSession, StartScanRequest};
 use filesystem::{
     fault::{FaultInjectingFileSystem, FaultOperation, FaultRule, FileSystemFault},
     native::{FileSystemProvider, NativeFileSystem},
@@ -58,6 +58,21 @@ struct Report {
     state: String,
     counts: Counts,
     sizes: Sizes,
+    analyzer: AnalyzerReport,
+}
+
+#[derive(Serialize)]
+struct AnalyzerReport {
+    total_duration_ms: u128,
+    root_duration_ms: u128,
+    explorer_first_page_duration_ms: u128,
+    directory_map_duration_ms: u128,
+    large_files_duration_ms: u128,
+    explorer_items: usize,
+    directory_map_nodes: usize,
+    directory_map_remainder_objects: String,
+    peak_rss_before_bytes: Option<u64>,
+    peak_rss_after_bytes: Option<u64>,
 }
 
 fn parse_fault(value: &str) -> Result<FileSystemFault, Box<dyn Error>> {
@@ -202,6 +217,10 @@ fn state_name(session: &ScanSession) -> Result<String, Box<dyn Error>> {
         .to_owned())
 }
 
+fn map_nodes(node: &DirectoryMapNode) -> usize {
+    1 + node.children.iter().map(map_nodes).sum::<usize>()
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let mut config = parse_args(&std::env::args().skip(1).collect::<Vec<_>>()).map_err(|error| {
         format!("{error}\nusage: scanner-benchmark ROOT --output FILE --profile NAME [--generate-files N --generate-directories N --generate-depth N --file-size N] [--controlled] [--fault FAULT] [--fault-target RELATIVE_PATH]")
@@ -234,12 +253,43 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let session = terminal(&receiver)?;
     let duration = started.elapsed();
+    let analyzer_peak_before = peak_rss_bytes();
+    let analyzer_started = Instant::now();
+    let root_started = Instant::now();
+    let root = service.root(&session.id)?;
+    let root_duration_ms = root_started.elapsed().as_millis();
+    let explorer_started = Instant::now();
+    let explorer = service.children(&session.id, &root.id, None)?;
+    let explorer_first_page_duration_ms = explorer_started.elapsed().as_millis();
+    let map_started = Instant::now();
+    let map = service.directory_map(&session.id, &root.id, DirectoryMapMetric::Logical, 3, 8)?;
+    let directory_map_duration_ms = map_started.elapsed().as_millis();
+    let large_started = Instant::now();
+    let _large_files = service.large_files(&session.id, None)?;
+    let large_files_duration_ms = large_started.elapsed().as_millis();
+    let analyzer = AnalyzerReport {
+        total_duration_ms: analyzer_started.elapsed().as_millis(),
+        root_duration_ms,
+        explorer_first_page_duration_ms,
+        directory_map_duration_ms,
+        large_files_duration_ms,
+        explorer_items: explorer.items.len(),
+        directory_map_nodes: map_nodes(&map.root),
+        directory_map_remainder_objects: map
+            .root
+            .remainder
+            .as_ref()
+            .map(|remainder| remainder.objects_count.clone())
+            .unwrap_or_else(|| "0".into()),
+        peak_rss_before_bytes: analyzer_peak_before,
+        peak_rss_after_bytes: peak_rss_bytes(),
+    };
     service.shutdown()?;
     let entries = session.files_count.parse::<u64>()?
         + session.directories_count.parse::<u64>()?
         + session.symlinks_count.parse::<u64>()?;
     let report = Report {
-        schema_version: 1,
+        schema_version: 2,
         profile: config.profile,
         root: config.root.to_string_lossy().into_owned(),
         started_at_ms,
@@ -263,6 +313,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             unique_allocated_bytes: session.unique_allocated_size,
             sqlite_bytes: database_size(&database),
         },
+        analyzer,
     };
     if let Some(parent) = config.output.parent() {
         fs::create_dir_all(parent)?;

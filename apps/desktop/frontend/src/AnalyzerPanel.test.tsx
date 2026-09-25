@@ -218,6 +218,153 @@ describe("Analyzer UI", () => {
     );
   });
 
+  it("keeps map, breadcrumb, back and forward navigation in one history", async () => {
+    const deep = {
+      ...nestedEntry,
+      id: "10",
+      parent_id: "9",
+      name: "deep",
+      path: "/fixture/nested/deep",
+    };
+    vi.mocked(getChildren).mockImplementation(async (_scan, directory) => ({
+      items:
+        directory === "8" ? [nestedEntry] : directory === "9" ? [deep] : [],
+      next_cursor: null,
+    }));
+    vi.mocked(getDirectoryMap).mockImplementation(
+      async (_scan, directory, metric) => ({
+        metric,
+        root: {
+          entry:
+            directory === "8" ? root : directory === "9" ? nestedEntry : deep,
+          size: "20",
+          remainder: null,
+          children:
+            directory === "8"
+              ? [
+                  {
+                    entry: nestedEntry,
+                    size: "20",
+                    remainder: null,
+                    children: [],
+                  },
+                ]
+              : directory === "9"
+                ? [{ entry: deep, size: "20", remainder: null, children: [] }]
+                : [],
+        },
+      }),
+    );
+    render(<AnalyzerPanel enabled scan={scan} />);
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Открыть каталог nested на карте",
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Открыть каталог deep на карте",
+      }),
+    );
+    expect(await screen.findByRole("button", { name: "deep" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "nested" }));
+    await waitFor(() =>
+      expect(getChildren).toHaveBeenLastCalledWith("7", "9", null),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Назад" }));
+    await waitFor(() =>
+      expect(getChildren).toHaveBeenLastCalledWith("7", "8", null),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Вперёд" }));
+    await waitFor(() =>
+      expect(getChildren).toHaveBeenLastCalledWith("7", "9", null),
+    );
+  });
+
+  it("opens an old result and then a partial scan without retaining stale analyzer state", async () => {
+    const oldScan = { ...scan, id: "6" };
+    const partialScan = {
+      ...scan,
+      id: "7",
+      state: "partial" as const,
+      errors_count: "1",
+    };
+    vi.mocked(getScanRoot).mockImplementation(async (scanId) => ({
+      ...root,
+      id: scanId === "6" ? "60" : "70",
+    }));
+    vi.mocked(getChildren).mockResolvedValue({ items: [], next_cursor: null });
+    vi.mocked(getDirectoryMap).mockImplementation(
+      async (scanId, _directory, metric) => ({
+        metric,
+        root: {
+          entry: { ...root, id: scanId === "6" ? "60" : "70" },
+          size: "0",
+          children: [],
+          remainder: null,
+        },
+      }),
+    );
+    const { rerender } = render(<AnalyzerPanel enabled scan={oldScan} />);
+    await waitFor(() => expect(getChildren).toHaveBeenCalledWith("6", "60"));
+    rerender(<AnalyzerPanel enabled scan={partialScan} />);
+    await waitFor(() => expect(getChildren).toHaveBeenCalledWith("7", "70"));
+    expect(getDirectoryMap).toHaveBeenLastCalledWith(
+      "7",
+      "70",
+      "logical",
+      3,
+      8,
+    );
+  });
+
+  it("keeps a 100K directory payload bounded and renders its first viewport promptly", async () => {
+    const hugeScan = { ...scan, files_count: "100001", logical_size: "100001" };
+    vi.mocked(getChildren).mockResolvedValue({
+      items: Array.from({ length: 100 }, (_, index) => ({
+        id: String(1000 + index),
+        parent_id: "8",
+        name: `wide-${index}`,
+        path: `/fixture/wide-${index}`,
+        kind: "file" as const,
+        logical_size: "1",
+        aggregate_size: "1",
+      })),
+      next_cursor: "1099",
+    });
+    vi.mocked(getDirectoryMap).mockResolvedValue({
+      metric: "logical",
+      root: {
+        entry: root,
+        size: "100001",
+        children: Array.from({ length: 8 }, (_, index) => ({
+          entry: {
+            id: String(2000 + index),
+            parent_id: "8",
+            name: `largest-${index}`,
+            path: `/fixture/largest-${index}`,
+            kind: "file" as const,
+            logical_size: "1",
+            aggregate_size: "1",
+          },
+          size: "1",
+          children: [],
+          remainder: null,
+        })),
+        remainder: { objects_count: "99993", size: "99993" },
+      },
+    });
+    const started = performance.now();
+    render(<AnalyzerPanel enabled scan={hugeScan} />);
+    expect(await screen.findByText("Остальное (99993)")).toBeInTheDocument();
+    expect(performance.now() - started).toBeLessThan(2_000);
+    const list = screen.getByRole("list", { name: "Содержимое каталога" });
+    expect(within(list).getAllByRole("listitem").length).toBeLessThan(30);
+  });
+
   it("renders a disk overview and opens a category from the treemap", async () => {
     vi.mocked(getCategories).mockResolvedValue([
       { category: "images", files_count: "2", logical_size: "12" },

@@ -676,6 +676,23 @@ fn history_compares_persisted_scans_and_duplicate_candidates_are_size_groups() {
     assert!(comparison.added_files[0].path.ends_with("third"));
     assert!(comparison.removed_files.is_empty());
     assert!(comparison.modified_files.is_empty());
+    let old_root = service.root(&older.id).unwrap();
+    assert_eq!(
+        service
+            .children(&older.id, &old_root.id, None)
+            .unwrap()
+            .items
+            .len(),
+        2
+    );
+    assert_eq!(
+        service
+            .directory_map(&older.id, &old_root.id, DirectoryMapMetric::Logical, 3, 8)
+            .unwrap()
+            .root
+            .size,
+        "16"
+    );
     let groups = service.duplicate_candidates(None).unwrap();
     assert_eq!(groups.items[0].size, "8");
     assert_eq!(groups.items[0].files_count, "2");
@@ -1112,6 +1129,24 @@ fn permission_and_disappeared_file_errors_produce_partial_result_and_do_not_stop
     assert_eq!(issues.items.len(), 2);
     assert!(issues.items.iter().any(|i| i.code == "permission_denied"));
     assert!(issues.items.iter().any(|i| i.code == "file_disappeared"));
+    let root = reopened.root(&result.id).unwrap();
+    assert_eq!(
+        reopened
+            .children(&result.id, &root.id, None)
+            .unwrap()
+            .items
+            .len(),
+        2
+    );
+    assert_eq!(
+        reopened
+            .directory_map(&result.id, &root.id, DirectoryMapMetric::Logical, 3, 8)
+            .unwrap()
+            .root
+            .size,
+        "17"
+    );
+    reopened.shutdown().unwrap();
 }
 
 struct PausedFs {
