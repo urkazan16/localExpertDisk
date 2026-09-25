@@ -1,4 +1,5 @@
 use super::*;
+use domain::DirectoryMapRemainder;
 use filesystem::{
     native::{DirectoryEntries, EntryMetadata},
     operations::TrashProvider,
@@ -162,6 +163,110 @@ fn completed_scan_exposes_bounded_folder_large_file_and_search_pages() {
         .items
         .iter()
         .all(|file| !file.timestamp_ms.is_empty()));
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn directory_map_returns_ranked_multilevel_nodes_and_exact_remainder() {
+    let f = Fixture::new();
+    fs::create_dir_all(f.root.join("large/nested")).unwrap();
+    fs::write(f.root.join("large/nested/deep.bin"), [0; 50]).unwrap();
+    fs::write(f.root.join("medium.bin"), [0; 30]).unwrap();
+    fs::write(f.root.join("small.bin"), [0; 20]).unwrap();
+    fs::write(f.root.join("tiny.bin"), [0; 10]).unwrap();
+    let result = run_fixture(&f, Arc::new(NativeFileSystem));
+    let service = f.service();
+    let root = service.root(&result.id).unwrap();
+    let map = service
+        .directory_map(&result.id, &root.id, DirectoryMapMetric::Logical, 3, 2)
+        .unwrap();
+
+    assert_eq!(map.root.size, "110");
+    assert_eq!(map.root.children.len(), 2);
+    assert_eq!(map.root.children[0].entry.name, "large");
+    assert_eq!(map.root.children[0].children[0].entry.name, "nested");
+    assert_eq!(
+        map.root.children[0].children[0].children[0].entry.name,
+        "deep.bin"
+    );
+    assert_eq!(
+        map.root.remainder,
+        Some(DirectoryMapRemainder {
+            objects_count: "2".into(),
+            size: "30".into(),
+        })
+    );
+    assert_eq!(
+        service
+            .directory_map(&result.id, &root.id, DirectoryMapMetric::Logical, 4, 2)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidTarget
+    );
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn wide_directory_map_is_independent_from_the_explorer_page_limit() {
+    let f = Fixture::new();
+    for index in 0..250 {
+        fs::write(f.root.join(format!("file-{index:03}.bin")), [0]).unwrap();
+    }
+    let result = run_fixture(&f, Arc::new(NativeFileSystem));
+    let service = f.service();
+    let root = service.root(&result.id).unwrap();
+    assert_eq!(
+        service
+            .children(&result.id, &root.id, None)
+            .unwrap()
+            .items
+            .len(),
+        100
+    );
+    let map = service
+        .directory_map(&result.id, &root.id, DirectoryMapMetric::Logical, 1, 8)
+        .unwrap();
+    assert_eq!(map.root.children.len(), 8);
+    assert_eq!(
+        map.root.remainder,
+        Some(DirectoryMapRemainder {
+            objects_count: "242".into(),
+            size: "242".into(),
+        })
+    );
+    service.shutdown().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn unique_allocated_directory_map_assigns_a_hardlink_to_one_branch() {
+    let f = Fixture::new();
+    fs::create_dir(f.root.join("a")).unwrap();
+    fs::create_dir(f.root.join("b")).unwrap();
+    let original = f.root.join("a/original.bin");
+    fs::write(&original, [0; 64]).unwrap();
+    fs::hard_link(&original, f.root.join("b/link.bin")).unwrap();
+    let result = run_fixture(&f, Arc::new(NativeFileSystem));
+    let service = f.service();
+    let root = service.root(&result.id).unwrap();
+    let map = service
+        .directory_map(
+            &result.id,
+            &root.id,
+            DirectoryMapMetric::UniqueAllocated,
+            2,
+            8,
+        )
+        .unwrap();
+    let sizes = map
+        .root
+        .children
+        .iter()
+        .map(|node| node.size.parse::<u64>().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(sizes.iter().sum::<u64>().to_string(), map.root.size);
+    assert_eq!(map.root.size, result.unique_allocated_size.unwrap());
+    assert_eq!(sizes.iter().filter(|size| **size > 0).count(), 1);
     service.shutdown().unwrap();
 }
 

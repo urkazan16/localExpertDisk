@@ -1,8 +1,9 @@
 use analyzer::Totals;
 use domain::{
-    AppError, AppInfo, BatchOperationResult, CategorySummary, DuplicateGroupPage, EntryPage,
-    ErrorCode, IndexedEntry, OldFileCriterion, OldFilePage, ScanComparison, ScanHistoryPage,
-    ScanIssue, ScanIssuePage, ScanSession, ScanState, StartScanRequest,
+    AppError, AppInfo, BatchOperationResult, CategorySummary, DirectoryMap, DirectoryMapMetric,
+    DuplicateGroupPage, EntryPage, ErrorCode, IndexedEntry, OldFileCriterion, OldFilePage,
+    ScanComparison, ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState,
+    StartScanRequest,
 };
 use filesystem::{
     native::{EntryKind, FileSystemProvider, NativeFileSystem},
@@ -228,6 +229,25 @@ impl ScanService {
             parse_id(scan_id)?,
             parse_id(directory_id)?,
             after.map(parse_id).transpose()?.unwrap_or(0),
+        )
+    }
+    pub fn directory_map(
+        &self,
+        scan_id: &str,
+        directory_id: &str,
+        metric: DirectoryMapMetric,
+        depth: u8,
+        max_children: u8,
+    ) -> Result<DirectoryMap, AppError> {
+        if !(1..=3).contains(&depth) || !(1..=18).contains(&max_children) {
+            return Err(AppError::new(ErrorCode::InvalidTarget));
+        }
+        guard(&self.shared.storage)?.directory_map(
+            parse_id(scan_id)?,
+            parse_id(directory_id)?,
+            metric,
+            depth,
+            usize::from(max_children),
         )
     }
     pub fn large_files(&self, scan_id: &str, after: Option<&str>) -> Result<EntryPage, AppError> {

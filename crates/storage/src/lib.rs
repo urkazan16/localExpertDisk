@@ -41,6 +41,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "unique_allocated_size",
         include_str!("../migrations/0010_unique_allocated_size.sql"),
     ),
+    (
+        "identity_owner",
+        include_str!("../migrations/0011_identity_owner.sql"),
+    ),
 ];
 
 pub trait StorageStatus {
@@ -171,7 +175,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.db");
         let db = SqliteStorage::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 10);
+        assert_eq!(db.schema_version().unwrap(), 11);
         db.connection
             .execute_batch(
                 "CREATE TABLE marker(value TEXT); INSERT INTO marker VALUES ('preserved');",
@@ -179,12 +183,47 @@ mod tests {
             .unwrap();
         drop(db);
         let db = SqliteStorage::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 10);
+        assert_eq!(db.schema_version().unwrap(), 11);
         let marker: String = db
             .connection
             .query_row("SELECT value FROM marker", [], |row| row.get(0))
             .unwrap();
         assert_eq!(marker, "preserved");
+    }
+
+    #[test]
+    fn identity_owner_migration_backfills_the_first_hardlink_entry() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate(&mut connection, &MIGRATIONS[..10]).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO scan_sessions(root_path,root_display,state,started_at_ms,finished_at_ms)
+                   VALUES (X'2F','/','completed',1,2);
+                 INSERT INTO entries(scan_id,parent_id,path,name,kind,logical_size,allocated_size,identity)
+                   VALUES (1,NULL,X'2F','/','directory',0,NULL,NULL);
+                 INSERT INTO entries(scan_id,parent_id,path,name,kind,logical_size,allocated_size,identity)
+                   VALUES (1,1,X'2F61','a','file',10,4096,'device:inode');
+                 INSERT INTO entries(scan_id,parent_id,path,name,kind,logical_size,allocated_size,identity)
+                   VALUES (1,1,X'2F62','b','file',10,4096,'device:inode');
+                 INSERT INTO scan_file_identities(scan_id,identity,allocated_size)
+                   VALUES (1,'device:inode',4096);",
+            )
+            .unwrap();
+        migrate(&mut connection, MIGRATIONS).unwrap();
+        let owner: i64 = connection
+            .query_row(
+                "SELECT owner_entry_id FROM scan_file_identities WHERE scan_id=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(owner, 2);
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+                .unwrap(),
+            11
+        );
     }
 
     #[test]

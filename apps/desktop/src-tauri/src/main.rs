@@ -1,9 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use domain::{
-    AppError, AppInfo, BatchOperationResult, CategorySummary, DuplicateGroupPage, EntryPage,
-    ErrorCode, FileCategory, FileSort, IndexedEntry, OldFileCriterion, OldFilePage, ScanComparison,
-    ScanHistoryPage, ScanIssuePage, ScanSession, StartScanRequest, VolumeInfo,
+    AppError, AppInfo, BatchOperationResult, CategorySummary, DirectoryMap, DirectoryMapMetric,
+    DuplicateGroupPage, EntryPage, ErrorCode, FileCategory, FileSort, IndexedEntry,
+    OldFileCriterion, OldFilePage, ScanComparison, ScanHistoryPage, ScanIssuePage, ScanSession,
+    StartScanRequest, VolumeInfo,
 };
 use filesystem::volumes::{LocalVolumes, VolumeProvider};
 use services::scans::ScanService;
@@ -96,6 +97,22 @@ async fn get_children(
     let service = state.service()?;
     tauri::async_runtime::spawn_blocking(move || {
         service.children(&scan_id, &directory_id, after_id.as_deref())
+    })
+    .await
+    .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn get_directory_map(
+    state: tauri::State<'_, AppState>,
+    scan_id: String,
+    directory_id: String,
+    metric: DirectoryMapMetric,
+    depth: u8,
+    max_children: u8,
+) -> Result<DirectoryMap, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        service.directory_map(&scan_id, &directory_id, metric, depth, max_children)
     })
     .await
     .map_err(|_| internal())?
@@ -314,6 +331,7 @@ fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         get_scan_issues,
         get_scan_root,
         get_children,
+        get_directory_map,
         get_large_files,
         get_filtered_large_files,
         get_categories,
@@ -395,7 +413,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let storage = ScanService::open(&directory.path().join("ipc.db")).unwrap();
         let response = invoke(AppState(Ok(storage))).unwrap();
-        assert_eq!(response.schema_version, 10);
+        assert_eq!(response.schema_version, 11);
         assert_eq!(response.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(
             response.capabilities,

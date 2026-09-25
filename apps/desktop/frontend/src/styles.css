@@ -364,8 +364,20 @@ button.breadcrumb:disabled {
   gap: 18px;
 }
 .view-switcher {
+  align-items: flex-end;
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
+}
+.view-switcher label {
+  color: #536356;
+  display: grid;
+  font-size: 12px;
+  gap: 4px;
+  margin-right: 6px;
+}
+.view-switcher select {
+  min-width: 176px;
 }
 .view-switcher button.active {
   background: #365b3b;

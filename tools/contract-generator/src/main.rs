@@ -1,5 +1,6 @@
 use domain::{
-    AppError, AppInfo, BatchOperationResult, Capabilities, CategorySummary, DuplicateGroup,
+    AppError, AppInfo, BatchOperationResult, Capabilities, CategorySummary, DirectoryMap,
+    DirectoryMapMetric, DirectoryMapNode, DirectoryMapRemainder, DuplicateGroup,
     DuplicateGroupPage, EntryPage, ErrorCode, FileCategory, FileSort, IndexedEntry,
     IndexedEntryKind, OldFile, OldFileCriterion, OldFilePage, Platform, ScanComparison,
     ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState, SnapshotInfo,
@@ -30,6 +31,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         IndexedEntryKind::decl(&config),
         IndexedEntry::decl(&config),
         EntryPage::decl(&config),
+        DirectoryMapMetric::decl(&config),
+        DirectoryMapRemainder::decl(&config),
+        DirectoryMapNode::decl(&config),
+        DirectoryMap::decl(&config),
         FileCategory::decl(&config),
         FileSort::decl(&config),
         CategorySummary::decl(&config),
@@ -74,6 +79,9 @@ export function getScanRoot(scanId: string): Promise<IndexedEntry> {
 }
 export function getChildren(scanId: string, directoryId: string, afterId: string | null = null): Promise<EntryPage> {
   return invoke<EntryPage>('get_children', { scanId, directoryId, afterId });
+}
+export function getDirectoryMap(scanId: string, directoryId: string, metric: DirectoryMapMetric, depth: number = 3, maxChildren: number = 8): Promise<DirectoryMap> {
+  return invoke<DirectoryMap>('get_directory_map', { scanId, directoryId, metric, depth, maxChildren });
 }
 export function getLargeFiles(scanId: string, afterId: string | null = null): Promise<EntryPage> {
   return invoke<EntryPage>('get_large_files', { scanId, afterId });

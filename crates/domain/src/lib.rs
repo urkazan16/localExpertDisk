@@ -242,6 +242,34 @@ pub struct EntryPage {
     pub next_cursor: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DirectoryMapMetric {
+    Logical,
+    Allocated,
+    UniqueAllocated,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct DirectoryMapRemainder {
+    pub objects_count: String,
+    pub size: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct DirectoryMapNode {
+    pub entry: IndexedEntry,
+    pub size: String,
+    pub children: Vec<DirectoryMapNode>,
+    pub remainder: Option<DirectoryMapRemainder>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct DirectoryMap {
+    pub metric: DirectoryMapMetric,
+    pub root: DirectoryMapNode,
+}
+
 /// Coarse file grouping derived from the indexed filename extension.
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

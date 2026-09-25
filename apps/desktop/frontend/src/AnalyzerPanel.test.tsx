@@ -10,6 +10,7 @@ import { AnalyzerPanel } from "./AnalyzerPanel";
 import {
   getChildren,
   getCategories,
+  getDirectoryMap,
   getFilesInCategory,
   getFilteredLargeFiles,
   getScanRoot,
@@ -24,6 +25,7 @@ import {
 vi.mock("./api/generated", () => ({
   getChildren: vi.fn(),
   getCategories: vi.fn(),
+  getDirectoryMap: vi.fn(),
   getFilesInCategory: vi.fn(),
   getFilteredLargeFiles: vi.fn(),
   getScanRoot: vi.fn(),
@@ -59,6 +61,15 @@ const root = {
   logical_size: "0",
   aggregate_size: "22",
 };
+const nestedEntry = {
+  id: "9",
+  parent_id: "8",
+  name: "nested",
+  path: "/fixture/nested",
+  kind: "directory" as const,
+  logical_size: "0",
+  aggregate_size: "20",
+};
 
 async function findInExplorer(name: string) {
   const list = await screen.findByRole("list", {
@@ -71,6 +82,28 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(getScanRoot).mockResolvedValue(root);
   vi.mocked(getCategories).mockResolvedValue([]);
+  vi.mocked(getDirectoryMap).mockImplementation(
+    async (_scan, directoryId, metric) => ({
+      metric,
+      root: {
+        entry: directoryId === "8" ? root : nestedEntry,
+        size: directoryId === "8" ? "22" : "20",
+        children:
+          directoryId === "8"
+            ? [
+                {
+                  entry: nestedEntry,
+                  size: "20",
+                  children: [],
+                  remainder: null,
+                },
+              ]
+            : [],
+        remainder:
+          directoryId === "8" ? { objects_count: "1", size: "2" } : null,
+      },
+    }),
+  );
   vi.mocked(getFilteredLargeFiles).mockResolvedValue({
     items: [],
     next_cursor: null,
@@ -78,13 +111,7 @@ beforeEach(() => {
   vi.mocked(getChildren).mockResolvedValue({
     items: [
       {
-        id: "9",
-        parent_id: "8",
-        name: "nested",
-        path: "/fixture/nested",
-        kind: "directory",
-        logical_size: "0",
-        aggregate_size: "20",
+        ...nestedEntry,
       },
     ],
     next_cursor: null,
@@ -242,14 +269,68 @@ describe("Analyzer UI", () => {
       "aria-current",
       "page",
     );
+    await waitFor(() =>
+      expect(getDirectoryMap).toHaveBeenLastCalledWith(
+        "7",
+        "9",
+        "logical",
+        3,
+        8,
+      ),
+    );
     expect(
-      screen.getByText("В каталоге нет объектов ненулевого размера."),
+      await screen.findByText("В каталоге нет объектов ненулевого размера."),
     ).toBeInTheDocument();
   });
 
   it("switches to Sunburst and opens a directory with keyboard navigation", async () => {
-    render(<AnalyzerPanel enabled scan={scan} />);
+    const deep = {
+      ...nestedEntry,
+      id: "10",
+      parent_id: "9",
+      name: "deep",
+      path: "/fixture/nested/deep",
+    };
+    const leaf = {
+      ...nestedEntry,
+      id: "11",
+      parent_id: "10",
+      name: "leaf",
+      path: "/fixture/nested/deep/leaf",
+    };
+    vi.mocked(getDirectoryMap).mockResolvedValue({
+      metric: "logical",
+      root: {
+        entry: root,
+        size: "22",
+        remainder: null,
+        children: [
+          {
+            entry: nestedEntry,
+            size: "20",
+            remainder: null,
+            children: [
+              {
+                entry: deep,
+                size: "20",
+                remainder: null,
+                children: [
+                  {
+                    entry: leaf,
+                    size: "20",
+                    remainder: null,
+                    children: [],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const { container } = render(<AnalyzerPanel enabled scan={scan} />);
     fireEvent.click(await screen.findByRole("button", { name: "Sunburst" }));
+    expect(container.querySelectorAll(".sunburst path")).toHaveLength(3);
     const segment = screen.getByRole("button", {
       name: "Открыть каталог nested в Sunburst",
     });
@@ -259,26 +340,41 @@ describe("Analyzer UI", () => {
     );
   });
 
-  it("groups only overflowing map entries and warns about a later folder page", async () => {
-    vi.mocked(getChildren).mockResolvedValue({
-      items: Array.from({ length: 19 }, (_, index) => ({
-        id: String(100 + index),
-        parent_id: "8",
-        name: `item-${index}`,
-        path: `/fixture/item-${index}`,
-        kind: "file" as const,
-        logical_size: "1",
-        aggregate_size: "1",
-      })),
-      next_cursor: "118",
+  it("renders the exact remainder returned independently from explorer pagination", async () => {
+    vi.mocked(getDirectoryMap).mockResolvedValue({
+      metric: "logical",
+      root: {
+        entry: root,
+        size: "100",
+        children: [],
+        remainder: { objects_count: "91", size: "37" },
+      },
     });
     render(<AnalyzerPanel enabled scan={scan} />);
-    expect(
-      await screen.findByText("Остальные объекты (2)"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Карта отражает только текущую страницу каталога/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Остальное (91)")).toBeInTheDocument();
+    expect(screen.getByText("37 Б")).toBeInTheDocument();
+  });
+
+  it("reloads the map when the allocated-size metric changes", async () => {
+    const scanWithAllocation = {
+      ...scan,
+      allocated_size: "4096",
+      unique_allocated_size: "2048",
+    };
+    render(<AnalyzerPanel enabled scan={scanWithAllocation} />);
+    await waitFor(() => expect(getDirectoryMap).toHaveBeenCalled());
+    fireEvent.change(screen.getByLabelText("Метрика карты каталогов"), {
+      target: { value: "unique_allocated" },
+    });
+    await waitFor(() =>
+      expect(getDirectoryMap).toHaveBeenLastCalledWith(
+        "7",
+        "8",
+        "unique_allocated",
+        3,
+        8,
+      ),
+    );
   });
 
   it("loads the next category page using its cursor", async () => {

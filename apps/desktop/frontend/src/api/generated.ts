@@ -36,6 +36,10 @@ export type IndexedEntry = { id: string, parent_id: string | null, name: string,
  */
 aggregate_size: string, };
 export type EntryPage = { items: Array<IndexedEntry>, next_cursor: string | null, };
+export type DirectoryMapMetric = "logical" | "allocated" | "unique_allocated";
+export type DirectoryMapRemainder = { objects_count: string, size: string, };
+export type DirectoryMapNode = { entry: IndexedEntry, size: string, children: Array<DirectoryMapNode>, remainder: DirectoryMapRemainder | null, };
+export type DirectoryMap = { metric: DirectoryMapMetric, root: DirectoryMapNode, };
 export type FileCategory = "video" | "images" | "audio" | "documents" | "archives" | "applications" | "development" | "disk_images" | "databases" | "other";
 export type FileSort = "size_desc" | "modified_desc" | "name_asc";
 export type CategorySummary = { category: FileCategory, files_count: string, logical_size: string, };
@@ -74,6 +78,9 @@ export function getScanRoot(scanId: string): Promise<IndexedEntry> {
 }
 export function getChildren(scanId: string, directoryId: string, afterId: string | null = null): Promise<EntryPage> {
   return invoke<EntryPage>('get_children', { scanId, directoryId, afterId });
+}
+export function getDirectoryMap(scanId: string, directoryId: string, metric: DirectoryMapMetric, depth: number = 3, maxChildren: number = 8): Promise<DirectoryMap> {
+  return invoke<DirectoryMap>('get_directory_map', { scanId, directoryId, metric, depth, maxChildren });
 }
 export function getLargeFiles(scanId: string, afterId: string | null = null): Promise<EntryPage> {
   return invoke<EntryPage>('get_large_files', { scanId, afterId });

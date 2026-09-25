@@ -1,8 +1,9 @@
 use crate::{storage_error, SqliteStorage};
 use analyzer::Totals;
 use domain::{
-    AppError, CategorySummary, DuplicateGroup, DuplicateGroupPage, EntryPage, ErrorCode,
-    FileCategory, FileSort, IndexedEntry, IndexedEntryKind, OldFile, OldFileCriterion, OldFilePage,
+    AppError, CategorySummary, DirectoryMap, DirectoryMapMetric, DirectoryMapNode,
+    DirectoryMapRemainder, DuplicateGroup, DuplicateGroupPage, EntryPage, ErrorCode, FileCategory,
+    FileSort, IndexedEntry, IndexedEntryKind, OldFile, OldFileCriterion, OldFilePage,
     ScanComparison, ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState,
 };
 use filesystem::native::{decode_path, encode_path, EntryKind, EntryMetadata};
@@ -53,6 +54,8 @@ pub struct HashCandidate {
     pub identity: Option<String>,
     pub modified_at_ms: Option<i64>,
 }
+type DirectoryMapChild = (IndexedEntry, i64);
+type DirectoryMapChildren = (Vec<DirectoryMapChild>, usize, i64);
 fn integer(value: u64) -> Result<i64, AppError> {
     i64::try_from(value).map_err(|_| AppError::new(ErrorCode::SizeOverflow))
 }
@@ -458,7 +461,7 @@ impl SqliteStorage {
             .map_err(storage_error)?;
         let mut insert_identity = tx
             .prepare_cached(
-                "INSERT OR IGNORE INTO scan_file_identities(scan_id,identity,allocated_size) VALUES (?1,?2,?3)",
+                "INSERT OR IGNORE INTO scan_file_identities(scan_id,identity,allocated_size,owner_entry_id) VALUES (?1,?2,?3,?4)",
             )
             .map_err(storage_error)?;
         let mut insert_entry = tx
@@ -466,6 +469,22 @@ impl SqliteStorage {
             .map_err(storage_error)?;
         for entry in entries {
             let m = &entry.metadata;
+            insert_entry
+                .execute(params![
+                    scan_id,
+                    parent,
+                    encode_path(&entry.path),
+                    entry.path.file_name().unwrap_or_default().to_string_lossy(),
+                    m.kind.as_str(),
+                    integer(m.logical_size)?,
+                    m.allocated_size.map(integer).transpose()?,
+                    m.created_at_ms,
+                    m.modified_at_ms,
+                    m.accessed_at_ms,
+                    m.identity
+                ])
+                .map_err(storage_error)?;
+            let inserted_id = tx.last_insert_rowid();
             if m.kind == EntryKind::File {
                 unique_allocated = match (unique_allocated, m.allocated_size) {
                     (Some(total), Some(size)) => {
@@ -475,7 +494,12 @@ impl SqliteStorage {
                             (_, Some(1)) => false,
                             (Some(identity), _) => {
                                 insert_identity
-                                    .execute(params![scan_id, identity, integer(size)?])
+                                    .execute(params![
+                                        scan_id,
+                                        identity,
+                                        integer(size)?,
+                                        inserted_id
+                                    ])
                                     .map_err(storage_error)?
                                     == 0
                             }
@@ -494,23 +518,8 @@ impl SqliteStorage {
                     _ => None,
                 };
             }
-            insert_entry
-                .execute(params![
-                    scan_id,
-                    parent,
-                    encode_path(&entry.path),
-                    entry.path.file_name().unwrap_or_default().to_string_lossy(),
-                    m.kind.as_str(),
-                    integer(m.logical_size)?,
-                    m.allocated_size.map(integer).transpose()?,
-                    m.created_at_ms,
-                    m.modified_at_ms,
-                    m.accessed_at_ms,
-                    m.identity
-                ])
-                .map_err(storage_error)?;
             if m.kind == EntryKind::Directory {
-                let id = tx.last_insert_rowid();
+                let id = inserted_id;
                 tx.execute("INSERT INTO directory_queue(entry_id) VALUES (?1)", [id])
                     .map_err(storage_error)?;
                 tx.execute(
@@ -660,6 +669,180 @@ impl SqliteStorage {
             items: rows,
             next_cursor,
         })
+    }
+
+    pub fn directory_map(
+        &self,
+        scan_id: i64,
+        directory_id: i64,
+        metric: DirectoryMapMetric,
+        depth: u8,
+        max_children: usize,
+    ) -> Result<DirectoryMap, AppError> {
+        self.ensure_queryable(scan_id)?;
+        let session = self.get_scan(scan_id)?;
+        match metric {
+            DirectoryMapMetric::Allocated if session.allocated_size.is_none() => {
+                return Err(AppError::new(ErrorCode::InvalidTarget));
+            }
+            DirectoryMapMetric::UniqueAllocated if session.unique_allocated_size.is_none() => {
+                return Err(AppError::new(ErrorCode::InvalidTarget));
+            }
+            _ => {}
+        }
+        let root = self
+            .connection
+            .query_row(
+                "SELECT e.id,e.parent_id,e.name,e.path,e.kind,e.logical_size,
+                 COALESCE(a.logical_size,e.logical_size) FROM entries e
+                 LEFT JOIN directory_aggregates a ON a.entry_id=e.id
+                 WHERE e.scan_id=?1 AND e.id=?2 AND e.kind='directory'",
+                params![scan_id, directory_id],
+                read_entry,
+            )
+            .optional()
+            .map_err(storage_error)?
+            .ok_or_else(|| AppError::new(ErrorCode::InvalidTarget))?;
+        let root =
+            self.build_directory_map_node(scan_id, root, None, metric, depth, max_children)?;
+        Ok(DirectoryMap { metric, root })
+    }
+
+    fn build_directory_map_node(
+        &self,
+        scan_id: i64,
+        entry: IndexedEntry,
+        known_size: Option<i64>,
+        metric: DirectoryMapMetric,
+        depth: u8,
+        max_children: usize,
+    ) -> Result<DirectoryMapNode, AppError> {
+        if depth == 0 || entry.kind != IndexedEntryKind::Directory {
+            return Ok(DirectoryMapNode {
+                size: known_size.unwrap_or_default().to_string(),
+                entry,
+                children: Vec::new(),
+                remainder: None,
+            });
+        }
+        let parent_id = parse_id(&entry.id)?;
+        let (rows, total_count, total_size) =
+            self.directory_map_children(scan_id, parent_id, metric, max_children)?;
+        let shown_size = rows
+            .iter()
+            .try_fold(0_i64, |total, (_, size)| total.checked_add(*size))
+            .ok_or_else(|| AppError::new(ErrorCode::SizeOverflow))?;
+        let remainder_count = total_count.saturating_sub(rows.len());
+        let remainder = (remainder_count > 0).then(|| DirectoryMapRemainder {
+            objects_count: remainder_count.to_string(),
+            size: total_size.saturating_sub(shown_size).to_string(),
+        });
+        let mut children = Vec::with_capacity(rows.len());
+        for (child, size) in rows {
+            children.push(self.build_directory_map_node(
+                scan_id,
+                child,
+                Some(size),
+                metric,
+                depth - 1,
+                max_children,
+            )?);
+        }
+        Ok(DirectoryMapNode {
+            entry,
+            size: known_size.unwrap_or(total_size).to_string(),
+            children,
+            remainder,
+        })
+    }
+
+    fn directory_map_children(
+        &self,
+        scan_id: i64,
+        directory_id: i64,
+        metric: DirectoryMapMetric,
+        max_children: usize,
+    ) -> Result<DirectoryMapChildren, AppError> {
+        let standard_query = match metric {
+            DirectoryMapMetric::Logical => Some(
+                "WITH child_values AS (
+                   SELECT e.id,e.parent_id,e.name,e.path,e.kind,e.logical_size,
+                     COALESCE(a.logical_size,e.logical_size) AS aggregate_size,
+                     CASE WHEN e.kind='directory' THEN a.logical_size ELSE e.logical_size END AS metric_size
+                   FROM entries e LEFT JOIN directory_aggregates a ON a.entry_id=e.id
+                   WHERE e.scan_id=?1 AND e.parent_id=?2
+                 )
+                 SELECT id,parent_id,name,path,kind,logical_size,aggregate_size,metric_size,
+                   COUNT(*) OVER(),COALESCE(SUM(metric_size) OVER(),0)
+                 FROM child_values ORDER BY metric_size DESC,id LIMIT ?3",
+            ),
+            DirectoryMapMetric::Allocated => Some(
+                "WITH child_values AS (
+                   SELECT e.id,e.parent_id,e.name,e.path,e.kind,e.logical_size,
+                     COALESCE(a.logical_size,e.logical_size) AS aggregate_size,
+                     CASE WHEN e.kind='directory' THEN a.allocated_size
+                          WHEN e.kind='file' THEN e.allocated_size ELSE 0 END AS metric_size
+                   FROM entries e LEFT JOIN directory_aggregates a ON a.entry_id=e.id
+                   WHERE e.scan_id=?1 AND e.parent_id=?2
+                 )
+                 SELECT id,parent_id,name,path,kind,logical_size,aggregate_size,metric_size,
+                   COUNT(*) OVER(),COALESCE(SUM(metric_size) OVER(),0)
+                 FROM child_values ORDER BY metric_size DESC,id LIMIT ?3",
+            ),
+            DirectoryMapMetric::UniqueAllocated => None,
+        };
+        let unique_query = "WITH RECURSIVE subtree(direct_child,id) AS (
+               SELECT id,id FROM entries WHERE scan_id=?1 AND parent_id=?2
+               UNION ALL
+               SELECT subtree.direct_child,e.id FROM entries e
+               JOIN subtree ON e.parent_id=subtree.id WHERE e.scan_id=?1
+             ), owned_sizes AS (
+               SELECT subtree.direct_child,
+                 COALESCE(SUM(CASE
+                   WHEN e.kind='file' AND
+                     (e.identity IS NULL OR owners.identity IS NULL OR owners.owner_entry_id=e.id)
+                   THEN COALESCE(e.allocated_size,0) ELSE 0 END),0) AS metric_size
+               FROM subtree JOIN entries e ON e.id=subtree.id
+               LEFT JOIN scan_file_identities owners
+                 ON owners.scan_id=e.scan_id AND owners.identity=e.identity
+               GROUP BY subtree.direct_child
+             ), child_values AS (
+               SELECT e.id,e.parent_id,e.name,e.path,e.kind,e.logical_size,
+                 COALESCE(a.logical_size,e.logical_size) AS aggregate_size,
+                 COALESCE(owned_sizes.metric_size,0) AS metric_size
+               FROM entries e LEFT JOIN directory_aggregates a ON a.entry_id=e.id
+               LEFT JOIN owned_sizes ON owned_sizes.direct_child=e.id
+               WHERE e.scan_id=?1 AND e.parent_id=?2
+             )
+             SELECT id,parent_id,name,path,kind,logical_size,aggregate_size,metric_size,
+               COUNT(*) OVER(),COALESCE(SUM(metric_size) OVER(),0)
+             FROM child_values ORDER BY metric_size DESC,id LIMIT ?3";
+        let mut statement = self
+            .connection
+            .prepare(standard_query.unwrap_or(unique_query))
+            .map_err(storage_error)?;
+        let mut total_count = 0_usize;
+        let mut total_size = 0_i64;
+        let rows = statement
+            .query_map(params![scan_id, directory_id, max_children as i64], |row| {
+                let entry = read_entry(row)?;
+                let size = row.get::<_, i64>(7)?;
+                let count = row.get::<_, i64>(8)?;
+                let total = row.get::<_, i64>(9)?;
+                Ok((entry, size, count, total))
+            })
+            .map_err(storage_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(storage_error)?;
+        let values = rows
+            .into_iter()
+            .map(|(entry, size, count, total)| {
+                total_count = usize::try_from(count).unwrap_or(usize::MAX);
+                total_size = total;
+                (entry, size)
+            })
+            .collect();
+        Ok((values, total_count, total_size))
     }
 
     pub fn large_files(&self, scan_id: i64, cursor: Option<&str>) -> Result<EntryPage, AppError> {
@@ -1087,8 +1270,8 @@ impl SqliteStorage {
         )
         .map_err(storage_error)?;
         tx.execute(
-            "INSERT INTO scan_file_identities(scan_id,identity,allocated_size)
-             SELECT ?1,identity,MAX(allocated_size) FROM entries
+            "INSERT INTO scan_file_identities(scan_id,identity,allocated_size,owner_entry_id)
+             SELECT ?1,identity,MAX(allocated_size),MIN(id) FROM entries
              WHERE scan_id=?1 AND kind='file' AND identity IS NOT NULL AND allocated_size IS NOT NULL
              GROUP BY identity",
             [scan_id],
