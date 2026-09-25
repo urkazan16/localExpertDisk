@@ -307,7 +307,7 @@ export function ScanPanel({
       </form>
       {error && <p role="alert">{error}</p>}
       {scan && (
-        <div className="scan-result">
+        <div className="scan-result" data-scan-id={scan.id}>
           <div className="panel-heading">
             <h3 aria-live="polite">{labels[scan.state]}</h3>
             {!isTerminal(scan) && (

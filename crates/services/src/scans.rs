@@ -274,6 +274,14 @@ impl ScanService {
     ) -> Result<DuplicateDeleteResult, AppError> {
         self.delete_duplicate_entries_with(scan_id, entry_ids, &NativeTrash, &NativeFileSystem)
     }
+    pub fn delete_duplicate_entries_using(
+        &self,
+        scan_id: &str,
+        entry_ids: &[String],
+        trash: &impl TrashProvider,
+    ) -> Result<DuplicateDeleteResult, AppError> {
+        self.delete_duplicate_entries_with(scan_id, entry_ids, trash, &NativeFileSystem)
+    }
     fn delete_duplicate_entries_with(
         &self,
         scan_id: &str,

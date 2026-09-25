@@ -1,0 +1,19 @@
+{
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        {
+          "identifier": "desktop-e2e",
+          "windows": ["main"],
+          "permissions": [
+            "core:default",
+            "core:window:default",
+            "wdio:default",
+            "wdio-webdriver:default"
+          ]
+        }
+      ]
+    }
+  }
+}

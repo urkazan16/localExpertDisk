@@ -13,21 +13,30 @@
     "build": "npm run build --workspace @local-expert-disk/frontend",
     "test": "npm run test --workspace @local-expert-disk/frontend",
     "typecheck": "npm run typecheck --workspace @local-expert-disk/frontend",
-    "lint": "eslint apps/desktop/frontend",
+    "lint": "eslint apps/desktop/frontend tests/e2e",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "desktop:dev": "cd apps/desktop && tauri dev",
     "desktop:build": "cd apps/desktop && tauri build",
+    "desktop:e2e:build": "cd apps/desktop && tauri build --debug --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json",
+    "test:e2e": "node tests/e2e/run.mjs",
     "contracts": "cargo generate-contracts",
     "contracts:check": "cargo generate-contracts --check",
     "icons": "tauri icon apps/desktop/assets/icon.svg --output apps/desktop/src-tauri/icons"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.0.0",
     "@eslint/js": "^9.0.0",
+    "@tauri-apps/cli": "^2.0.0",
+    "@wdio/cli": "^9.32.0",
+    "@wdio/globals": "^9.31.3",
+    "@wdio/local-runner": "^9.32.0",
+    "@wdio/mocha-framework": "^9.32.0",
+    "@wdio/spec-reporter": "^9.32.0",
+    "@wdio/tauri-plugin": "^1.4.0",
+    "@wdio/tauri-service": "^1.4.0",
     "eslint": "^9.0.0",
-    "typescript-eslint": "^8.0.0",
     "eslint-plugin-react-hooks": "^5.2.0",
-    "prettier": "^3.0.0"
+    "prettier": "^3.0.0",
+    "typescript-eslint": "^8.0.0"
   }
 }

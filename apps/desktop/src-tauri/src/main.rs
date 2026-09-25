@@ -10,6 +10,21 @@ use filesystem::volumes::{LocalVolumes, VolumeProvider};
 use services::scans::ScanService;
 use tauri::{ipc::Channel, Manager};
 
+#[cfg(feature = "e2e")]
+use filesystem::{
+    fault::{FaultInjectingFileSystem, FaultOperation, FaultRule, FileSystemFault},
+    native::{FileSystemProvider, NativeFileSystem},
+    operations::TrashProvider,
+};
+#[cfg(feature = "e2e")]
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
+
 struct AppState(Result<ScanService, AppError>);
 impl AppState {
     fn service(&self) -> Result<ScanService, AppError> {
@@ -40,6 +55,16 @@ async fn start_scan(
     on_progress: Channel<ScanSession>,
 ) -> Result<ScanSession, AppError> {
     let service = state.service()?;
+    #[cfg(feature = "e2e")]
+    {
+        let fs = e2e_filesystem(&request);
+        tauri::async_runtime::spawn_blocking(move || {
+            service.start_with(request, fs, move |update| on_progress.send(update).is_ok())
+        })
+        .await
+        .map_err(|_| internal())?
+    }
+    #[cfg(not(feature = "e2e"))]
     tauri::async_runtime::spawn_blocking(move || {
         service.start(request, move |update| on_progress.send(update).is_ok())
     })
@@ -347,6 +372,10 @@ async fn delete_duplicate_entries(
 ) -> Result<DuplicateDeleteResult, AppError> {
     let service = state.service()?;
     tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(feature = "e2e")]
+        if let Some(trash) = E2eTrash::from_environment()? {
+            return service.delete_duplicate_entries_using(&scan_id, &entry_ids, &trash);
+        }
         service.delete_duplicate_entries(&scan_id, &entry_ids)
     })
     .await
@@ -354,12 +383,77 @@ async fn delete_duplicate_entries(
 }
 fn initialize_storage(app: &tauri::App) -> Result<ScanService, AppError> {
     let unavailable = || AppError::new(ErrorCode::StorageUnavailable);
+    #[cfg(feature = "e2e")]
+    if let Some(database) = std::env::var_os("LOCAL_EXPERT_DISK_E2E_DB").map(PathBuf::from) {
+        if !database.is_absolute() {
+            return Err(unavailable());
+        }
+        let parent = database.parent().ok_or_else(unavailable)?;
+        std::fs::create_dir_all(parent).map_err(|_| unavailable())?;
+        return ScanService::open(&database).map_err(|mut error| {
+            error.recoverable = false;
+            error
+        });
+    }
     let directory = app.path().app_data_dir().map_err(|_| unavailable())?;
     std::fs::create_dir_all(&directory).map_err(|_| unavailable())?;
     ScanService::open(&directory.join("index.db")).map_err(|mut error| {
         error.recoverable = false;
         error
     })
+}
+
+#[cfg(feature = "e2e")]
+fn e2e_filesystem(request: &StartScanRequest) -> Arc<dyn FileSystemProvider> {
+    let denied = PathBuf::from(&request.root_path).join("partial-denied");
+    let Ok(denied) = denied.canonicalize() else {
+        return Arc::new(NativeFileSystem);
+    };
+    Arc::new(FaultInjectingFileSystem::new(
+        Arc::new(NativeFileSystem),
+        vec![FaultRule::new(
+            denied,
+            FaultOperation::ReadDirectory,
+            1,
+            FileSystemFault::PermissionDenied,
+        )],
+    ))
+}
+
+#[cfg(feature = "e2e")]
+struct E2eTrash {
+    directory: PathBuf,
+}
+
+#[cfg(feature = "e2e")]
+impl E2eTrash {
+    fn from_environment() -> Result<Option<Self>, AppError> {
+        let Some(directory) = std::env::var_os("LOCAL_EXPERT_DISK_E2E_TRASH").map(PathBuf::from)
+        else {
+            return Ok(None);
+        };
+        if !directory.is_absolute() {
+            return Err(AppError::new(ErrorCode::InvalidTarget));
+        }
+        std::fs::create_dir_all(&directory)
+            .map_err(|_| AppError::new(ErrorCode::TrashUnavailable))?;
+        Ok(Some(Self { directory }))
+    }
+}
+
+#[cfg(feature = "e2e")]
+impl TrashProvider for E2eTrash {
+    fn move_to_trash(&self, path: &Path) -> Result<(), AppError> {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+        let name = path
+            .file_name()
+            .ok_or_else(|| AppError::new(ErrorCode::InvalidTarget))?;
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let destination = self
+            .directory
+            .join(format!("{id}-{}", name.to_string_lossy()));
+        std::fs::rename(path, destination).map_err(|_| AppError::new(ErrorCode::TrashUnavailable))
+    }
 }
 fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
@@ -395,7 +489,12 @@ fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
 }
 fn main() {
     tracing_subscriber::fmt().json().with_target(false).init();
-    let app = register_commands(tauri::Builder::default())
+    let builder = register_commands(tauri::Builder::default());
+    #[cfg(feature = "e2e")]
+    let builder = builder
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init());
+    let app = builder
         .setup(|app| {
             let storage = initialize_storage(app);
             if let Err(error) = &storage {
