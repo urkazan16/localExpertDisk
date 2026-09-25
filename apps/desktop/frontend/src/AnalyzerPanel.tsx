@@ -46,10 +46,20 @@ const categoryLabels = {
   other: "Другое",
 } as const;
 type FolderSort = "size_desc" | "name_asc";
+type DirectoryVisualizationMode = "treemap" | "sunburst";
 const VIRTUAL_LIST_THRESHOLD = 40;
 const VIRTUAL_ROW_HEIGHT = 92;
 const VIRTUAL_VIEWPORT_HEIGHT = 430;
 const VIRTUAL_OVERSCAN = 4;
+const MAX_VISUALIZED_ENTRIES = 18;
+const SUNBURST_COLORS = [
+  "#486f4d",
+  "#63845c",
+  "#7d9b6a",
+  "#99af7d",
+  "#b0bd8c",
+  "#c7cba1",
+];
 
 function sortFolderItems(items: IndexedEntry[], sort: FolderSort) {
   return [...items].sort((left, right) => {
@@ -200,6 +210,247 @@ function EntryRows({
   );
 }
 
+type DirectorySegment = {
+  entry: IndexedEntry | null;
+  label: string;
+  size: bigint;
+  percent: number;
+  ratio: number;
+};
+
+function directorySegments(items: IndexedEntry[]): DirectorySegment[] {
+  const sorted = [...items]
+    .filter((entry) => BigInt(entry.aggregate_size) > 0n)
+    .sort((left, right) => {
+      const leftSize = BigInt(left.aggregate_size);
+      const rightSize = BigInt(right.aggregate_size);
+      return rightSize > leftSize ? 1 : rightSize < leftSize ? -1 : 0;
+    });
+  const hasOverflow = sorted.length > MAX_VISUALIZED_ENTRIES;
+  const visible = hasOverflow
+    ? sorted.slice(0, MAX_VISUALIZED_ENTRIES - 1)
+    : sorted;
+  const remaining = hasOverflow ? sorted.slice(MAX_VISUALIZED_ENTRIES - 1) : [];
+  const segments: Omit<DirectorySegment, "percent" | "ratio">[] = visible.map(
+    (entry) => ({
+      entry,
+      label: entry.name || entry.path,
+      size: BigInt(entry.aggregate_size),
+    }),
+  );
+  if (remaining.length > 0) {
+    segments.push({
+      entry: null,
+      label: `Остальные объекты (${remaining.length})`,
+      size: remaining.reduce(
+        (total, entry) => total + BigInt(entry.aggregate_size),
+        0n,
+      ),
+    });
+  }
+  const total = segments.reduce((sum, segment) => sum + segment.size, 0n);
+  return segments.map((segment) => {
+    const ratio = total === 0n ? 0 : Number(segment.size) / Number(total);
+    return { ...segment, ratio, percent: ratio * 100 };
+  });
+}
+
+function polarPoint(radius: number, angle: number) {
+  return {
+    x: 160 + radius * Math.cos(angle - Math.PI / 2),
+    y: 160 + radius * Math.sin(angle - Math.PI / 2),
+  };
+}
+
+function ringSegmentPath(startAngle: number, endAngle: number) {
+  const safeEnd = Math.min(endAngle, startAngle + Math.PI * 2 - 0.0001);
+  const outerStart = polarPoint(132, startAngle);
+  const outerEnd = polarPoint(132, safeEnd);
+  const innerEnd = polarPoint(62, safeEnd);
+  const innerStart = polarPoint(62, startAngle);
+  const largeArc = safeEnd - startAngle > Math.PI ? 1 : 0;
+  return [
+    `M ${outerStart.x} ${outerStart.y}`,
+    `A 132 132 0 ${largeArc} 1 ${outerEnd.x} ${outerEnd.y}`,
+    `L ${innerEnd.x} ${innerEnd.y}`,
+    `A 62 62 0 ${largeArc} 0 ${innerStart.x} ${innerStart.y}`,
+    "Z",
+  ].join(" ");
+}
+
+function DirectoryVisualization({
+  directory,
+  items,
+  truncated,
+  onDirectory,
+}: {
+  directory: IndexedEntry;
+  items: IndexedEntry[];
+  truncated: boolean;
+  onDirectory: (entry: IndexedEntry) => void;
+}) {
+  const [mode, setMode] = useState<DirectoryVisualizationMode>("treemap");
+  const segments = directorySegments(items);
+  let angle = 0;
+  const arcs = segments.map((segment, index) => {
+    const startAngle = angle;
+    angle += segment.ratio * Math.PI * 2;
+    return {
+      ...segment,
+      startAngle,
+      endAngle: index === segments.length - 1 ? Math.PI * 2 : angle,
+    };
+  });
+  return (
+    <section className="analysis-block" aria-labelledby="directory-map-title">
+      <div className="panel-heading directory-map-heading">
+        <div>
+          <h3 id="directory-map-title">Структура каталога</h3>
+          <p className="hint">
+            {directory.path} · нажмите на каталог, чтобы перейти внутрь.
+          </p>
+        </div>
+        <div className="view-switcher" aria-label="Вид структуры каталога">
+          <button
+            className={mode === "treemap" ? "active" : "secondary"}
+            aria-pressed={mode === "treemap"}
+            onClick={() => setMode("treemap")}
+          >
+            Treemap
+          </button>
+          <button
+            className={mode === "sunburst" ? "active" : "secondary"}
+            aria-pressed={mode === "sunburst"}
+            onClick={() => setMode("sunburst")}
+          >
+            Sunburst
+          </button>
+        </div>
+      </div>
+      {truncated && (
+        <p className="warning">
+          Карта отражает только текущую страницу каталога — до 100 объектов.
+          Остальные доступны через страницы Проводника.
+        </p>
+      )}
+      {segments.length === 0 ? (
+        <p className="hint">В каталоге нет объектов ненулевого размера.</p>
+      ) : mode === "treemap" ? (
+        <div
+          className="directory-treemap"
+          role="list"
+          aria-label={`Treemap каталога ${directory.name || directory.path}`}
+        >
+          {segments.map((segment, index) => {
+            const content = (
+              <>
+                <strong>{segment.label}</strong>
+                <span>{formatBytes(segment.size.toString())}</span>
+                <span>
+                  {segment.percent > 0 && segment.percent < 0.1
+                    ? "<0,1"
+                    : segment.percent.toLocaleString("ru-RU", {
+                        maximumFractionDigits: 1,
+                      })}
+                  %
+                </span>
+              </>
+            );
+            return (
+              <div
+                className="directory-treemap-item"
+                key={segment.entry?.id ?? "remaining"}
+                role="listitem"
+                style={{
+                  flexGrow: Math.max(segment.percent, 1),
+                  flexBasis: `${Math.max(segment.percent, 14)}%`,
+                  background: SUNBURST_COLORS[index % SUNBURST_COLORS.length],
+                }}
+              >
+                {segment.entry?.kind === "directory" ? (
+                  <button
+                    aria-label={`Открыть каталог ${segment.label} на карте`}
+                    onClick={() => onDirectory(segment.entry!)}
+                  >
+                    {content}
+                  </button>
+                ) : (
+                  <div>{content}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="sunburst-layout">
+          <svg
+            className="sunburst"
+            viewBox="0 0 320 320"
+            role="img"
+            aria-label={`Sunburst каталога ${directory.name || directory.path}`}
+          >
+            {arcs.map((segment, index) => {
+              const path = (
+                <path
+                  d={ringSegmentPath(segment.startAngle, segment.endAngle)}
+                  fill={SUNBURST_COLORS[index % SUNBURST_COLORS.length]}
+                />
+              );
+              return segment.entry?.kind === "directory" ? (
+                <g
+                  className="sunburst-directory"
+                  key={segment.entry.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Открыть каталог ${segment.label} в Sunburst`}
+                  onClick={() => onDirectory(segment.entry!)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onDirectory(segment.entry!);
+                    }
+                  }}
+                >
+                  <title>
+                    {segment.label}: {formatBytes(segment.size.toString())}
+                  </title>
+                  {path}
+                </g>
+              ) : (
+                <g key={segment.entry?.id ?? "remaining"}>
+                  <title>
+                    {segment.label}: {formatBytes(segment.size.toString())}
+                  </title>
+                  {path}
+                </g>
+              );
+            })}
+            <text x="160" y="154" textAnchor="middle">
+              {directory.name || directory.path}
+            </text>
+            <text x="160" y="176" textAnchor="middle" className="sunburst-size">
+              {formatBytes(directory.aggregate_size)}
+            </text>
+          </svg>
+          <ul className="sunburst-legend" aria-label="Легенда Sunburst">
+            {segments.map((segment, index) => (
+              <li key={segment.entry?.id ?? "remaining"}>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    background: SUNBURST_COLORS[index % SUNBURST_COLORS.length],
+                  }}
+                />
+                {segment.label} · {formatBytes(segment.size.toString())}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function DiskOverview({
   scan,
   categories,
@@ -297,6 +548,7 @@ export function AnalyzerPanel({
   const [navigation, setNavigation] = useState<IndexedEntry[]>([]);
   const [navigationIndex, setNavigationIndex] = useState(-1);
   const [children, setChildren] = useState<EntryPage | null>(null);
+  const [folderPageIsPartial, setFolderPageIsPartial] = useState(false);
   const [categories, setCategories] = useState<CategorySummary[] | null>(null);
   const [categoryFiles, setCategoryFiles] = useState<EntryPage | null>(null);
   const [activeCategory, setActiveCategory] = useState<FileCategory | null>(
@@ -323,6 +575,7 @@ export function AnalyzerPanel({
     setNavigation([]);
     setNavigationIndex(-1);
     setChildren(null);
+    setFolderPageIsPartial(false);
     setCategories(null);
     setCategoryFiles(null);
     setActiveCategory(null);
@@ -345,6 +598,7 @@ export function AnalyzerPanel({
           setNavigation([entry]);
           setNavigationIndex(0);
           setChildren(page);
+          setFolderPageIsPartial(page.next_cursor !== null);
           setCategories(categoryItems);
         }
       })
@@ -369,6 +623,7 @@ export function AnalyzerPanel({
       if (current === version.current) {
         setDirectory(entry);
         setChildren(page);
+        setFolderPageIsPartial(after !== null || page.next_cursor !== null);
         if (after === null) setSelected([]);
         return true;
       }
@@ -632,6 +887,12 @@ export function AnalyzerPanel({
               </button>
             )}
           </section>
+          <DirectoryVisualization
+            directory={directory}
+            items={children.items}
+            truncated={folderPageIsPartial}
+            onDirectory={(entry) => void openDirectory(entry)}
+          />
           {categories && (
             <DiskOverview
               scan={scan}

@@ -60,6 +60,13 @@ const root = {
   aggregate_size: "22",
 };
 
+async function findInExplorer(name: string) {
+  const list = await screen.findByRole("list", {
+    name: "Содержимое каталога",
+  });
+  return within(list).findByText(name);
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(getScanRoot).mockResolvedValue(root);
@@ -87,7 +94,7 @@ beforeEach(() => {
 describe("Analyzer UI", () => {
   it("loads a bounded folder page and drills into an indexed directory", async () => {
     render(<AnalyzerPanel enabled scan={scan} />);
-    expect(await screen.findByText("nested")).toBeInTheDocument();
+    expect(await findInExplorer("nested")).toBeInTheDocument();
     expect(getChildren).toHaveBeenCalledWith("7", "8");
     fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
     await waitFor(() =>
@@ -120,7 +127,7 @@ describe("Analyzer UI", () => {
       next_cursor: null,
     });
     render(<AnalyzerPanel enabled scan={scan} />);
-    await screen.findByText("Яблоко");
+    await findInExplorer("Яблоко");
     fireEvent.change(screen.getByLabelText("Сортировка содержимого каталога"), {
       target: { value: "name_asc" },
     });
@@ -145,11 +152,11 @@ describe("Analyzer UI", () => {
       next_cursor: null,
     });
     render(<AnalyzerPanel enabled scan={scan} />);
-    await screen.findByText("file-000");
+    await findInExplorer("file-000");
     expect(screen.queryByText("file-099")).not.toBeInTheDocument();
     const list = screen.getByRole("list", { name: "Содержимое каталога" });
     fireEvent.scroll(list, { target: { scrollTop: 92 * 99 } });
-    expect(await screen.findByText("file-099")).toBeInTheDocument();
+    expect(await findInExplorer("file-099")).toBeInTheDocument();
     expect(within(list).getAllByRole("listitem").length).toBeLessThan(100);
   });
 
@@ -208,6 +215,72 @@ describe("Analyzer UI", () => {
     );
   });
 
+  it("drills through the directory treemap and keeps breadcrumbs in sync", async () => {
+    const nested = {
+      id: "9",
+      parent_id: "8",
+      name: "nested",
+      path: "/fixture/nested",
+      kind: "directory" as const,
+      logical_size: "0",
+      aggregate_size: "20",
+    };
+    vi.mocked(getChildren).mockImplementation(async (_scan, directory) => ({
+      items: directory === "8" ? [nested] : [],
+      next_cursor: null,
+    }));
+    render(<AnalyzerPanel enabled scan={scan} />);
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Открыть каталог nested на карте",
+      }),
+    );
+    await waitFor(() =>
+      expect(getChildren).toHaveBeenLastCalledWith("7", "9", null),
+    );
+    expect(screen.getByRole("button", { name: "nested" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(
+      screen.getByText("В каталоге нет объектов ненулевого размера."),
+    ).toBeInTheDocument();
+  });
+
+  it("switches to Sunburst and opens a directory with keyboard navigation", async () => {
+    render(<AnalyzerPanel enabled scan={scan} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sunburst" }));
+    const segment = screen.getByRole("button", {
+      name: "Открыть каталог nested в Sunburst",
+    });
+    fireEvent.keyDown(segment, { key: "Enter" });
+    await waitFor(() =>
+      expect(getChildren).toHaveBeenLastCalledWith("7", "9", null),
+    );
+  });
+
+  it("groups only overflowing map entries and warns about a later folder page", async () => {
+    vi.mocked(getChildren).mockResolvedValue({
+      items: Array.from({ length: 19 }, (_, index) => ({
+        id: String(100 + index),
+        parent_id: "8",
+        name: `item-${index}`,
+        path: `/fixture/item-${index}`,
+        kind: "file" as const,
+        logical_size: "1",
+        aggregate_size: "1",
+      })),
+      next_cursor: "118",
+    });
+    render(<AnalyzerPanel enabled scan={scan} />);
+    expect(
+      await screen.findByText("Остальные объекты (2)"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Карта отражает только текущую страницу каталога/),
+    ).toBeInTheDocument();
+  });
+
   it("loads the next category page using its cursor", async () => {
     vi.mocked(getCategories).mockResolvedValue([
       { category: "images", files_count: "101", logical_size: "101" },
@@ -231,7 +304,7 @@ describe("Analyzer UI", () => {
       next_cursor: null,
     });
     render(<AnalyzerPanel enabled scan={scan} />);
-    await screen.findByText("nested");
+    await findInExplorer("nested");
     expect(getFilteredLargeFiles).not.toHaveBeenCalled();
     fireEvent.click(
       screen.getByRole("button", { name: "Показать крупные файлы" }),
@@ -260,7 +333,7 @@ describe("Analyzer UI", () => {
       .mockResolvedValueOnce({ items: [], next_cursor: "44" })
       .mockResolvedValueOnce({ items: [], next_cursor: null });
     render(<AnalyzerPanel enabled scan={scan} />);
-    await screen.findByText("nested");
+    await findInExplorer("nested");
 
     fireEvent.click(
       screen.getByRole("button", { name: "Показать крупные файлы" }),
@@ -308,7 +381,7 @@ describe("Analyzer UI", () => {
     vi.mocked(openEntry).mockResolvedValue();
     vi.mocked(revealEntry).mockResolvedValue();
     render(<AnalyzerPanel enabled scan={scan} />);
-    await screen.findByText("nested");
+    await findInExplorer("nested");
     fireEvent.click(screen.getByRole("button", { name: "Открыть в системе" }));
     await waitFor(() => expect(openEntry).toHaveBeenCalledWith("7", "9"));
     fireEvent.click(screen.getByRole("button", { name: "Показать в системе" }));
@@ -319,7 +392,7 @@ describe("Analyzer UI", () => {
     vi.mocked(moveEntryToTrash).mockResolvedValue();
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<AnalyzerPanel enabled scan={scan} trash />);
-    await screen.findByText("nested");
+    await findInExplorer("nested");
     fireEvent.click(screen.getByRole("button", { name: "В корзину" }));
     await waitFor(() =>
       expect(moveEntryToTrash).toHaveBeenCalledWith("7", "9"),
@@ -334,7 +407,7 @@ describe("Analyzer UI", () => {
     });
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<AnalyzerPanel enabled scan={scan} trash />);
-    await screen.findByText("nested");
+    await findInExplorer("nested");
     fireEvent.click(screen.getByLabelText("Выбрать nested"));
     fireEvent.click(
       screen.getByRole("button", { name: "Переместить в корзину" }),
@@ -374,7 +447,7 @@ describe("Analyzer UI", () => {
     });
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<AnalyzerPanel enabled scan={scan} trash />);
-    await screen.findByText("first");
+    await findInExplorer("first");
     fireEvent.click(screen.getByLabelText("Выбрать first"));
     fireEvent.click(screen.getByLabelText("Выбрать second"));
     fireEvent.click(

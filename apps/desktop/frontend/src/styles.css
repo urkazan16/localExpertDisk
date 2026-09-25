@@ -360,6 +360,109 @@ button.breadcrumb:disabled {
 .disk-overview-metrics {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
+.directory-map-heading {
+  gap: 18px;
+}
+.view-switcher {
+  display: flex;
+  gap: 6px;
+}
+.view-switcher button.active {
+  background: #365b3b;
+  border-color: #365b3b;
+  color: #fff;
+}
+.directory-treemap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-height: 250px;
+}
+.directory-treemap-item {
+  border-radius: 8px;
+  display: flex;
+  min-height: 92px;
+  min-width: 130px;
+  overflow: hidden;
+}
+.directory-treemap-item > button,
+.directory-treemap-item > div {
+  align-items: flex-start;
+  background: transparent;
+  border: 0;
+  color: #172d1c;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 14px;
+  text-align: left;
+}
+.directory-treemap-item > button:hover {
+  background: rgb(255 255 255 / 24%);
+}
+.directory-treemap-item strong {
+  overflow-wrap: anywhere;
+}
+.directory-treemap-item span {
+  font-size: 12px;
+}
+.sunburst-layout {
+  align-items: center;
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+}
+.sunburst {
+  height: auto;
+  max-width: 360px;
+  width: 100%;
+}
+.sunburst path {
+  stroke: #f7f8f3;
+  stroke-width: 2;
+}
+.sunburst-directory {
+  cursor: pointer;
+  outline: none;
+}
+.sunburst-directory:hover path,
+.sunburst-directory:focus path {
+  filter: brightness(1.12);
+  stroke: #21352c;
+  stroke-width: 4;
+}
+.sunburst text {
+  fill: #21352c;
+  font-size: 14px;
+  font-weight: 700;
+  max-width: 110px;
+}
+.sunburst text.sunburst-size {
+  fill: #657060;
+  font-size: 11px;
+  font-weight: 400;
+}
+.sunburst-legend {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.sunburst-legend li {
+  align-items: center;
+  display: flex;
+  font-size: 13px;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.sunburst-legend li > span {
+  border-radius: 3px;
+  flex: 0 0 12px;
+  height: 12px;
+}
 .treemap {
   display: flex;
   flex-wrap: wrap;
@@ -478,6 +581,9 @@ button.treemap-tile:hover {
     grid-column: 1 / -1;
   }
   .disk-overview-metrics {
+    grid-template-columns: 1fr;
+  }
+  .sunburst-layout {
     grid-template-columns: 1fr;
   }
 }
