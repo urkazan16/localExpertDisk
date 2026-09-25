@@ -49,6 +49,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "duplicate_fingerprint_cache",
         include_str!("../migrations/0012_duplicate_fingerprint_cache.sql"),
     ),
+    (
+        "entry_category",
+        include_str!("../migrations/0013_entry_category.sql"),
+    ),
+    (
+        "history_duplicates",
+        include_str!("../migrations/0014_history_duplicates.sql"),
+    ),
 ];
 
 pub trait StorageStatus {
@@ -179,7 +187,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.db");
         let db = SqliteStorage::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 12);
+        assert_eq!(db.schema_version().unwrap(), 14);
         db.connection
             .execute_batch(
                 "CREATE TABLE marker(value TEXT); INSERT INTO marker VALUES ('preserved');",
@@ -187,7 +195,7 @@ mod tests {
             .unwrap();
         drop(db);
         let db = SqliteStorage::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 12);
+        assert_eq!(db.schema_version().unwrap(), 14);
         let marker: String = db
             .connection
             .query_row("SELECT value FROM marker", [], |row| row.get(0))
@@ -226,7 +234,7 @@ mod tests {
             connection
                 .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
                 .unwrap(),
-            12
+            14
         );
     }
 

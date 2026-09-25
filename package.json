@@ -20,6 +20,9 @@
     "desktop:build": "cd apps/desktop && tauri build",
     "desktop:e2e:build": "cd apps/desktop && tauri build --debug --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json",
     "test:e2e": "node tests/e2e/run.mjs",
+    "performance:1m": "node tools/performance-profile.mjs 1m",
+    "performance:5m": "node tools/performance-profile.mjs 5m",
+    "performance:soak": "node tools/performance-profile.mjs soak",
     "contracts": "cargo generate-contracts",
     "contracts:check": "cargo generate-contracts --check",
     "icons": "tauri icon apps/desktop/assets/icon.svg --output apps/desktop/src-tauri/icons"

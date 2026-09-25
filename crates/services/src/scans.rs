@@ -2,9 +2,10 @@ use analyzer::Totals;
 use domain::{
     AppError, AppInfo, BatchOperationResult, CategorySummary, DirectoryMap, DirectoryMapMetric,
     DuplicateDeleteFailure, DuplicateDeleteResult, DuplicateFilePage, DuplicateGroupPage,
+    DuplicateHashFailure, DuplicateHashPhase, DuplicateHashProgress, DuplicateHashResult,
     EntryPage, ErrorCode, HistoryCleanupResult, IndexedEntry, OldFileCriterion, OldFilePage,
-    ScanComparison, ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState,
-    StartScanRequest,
+    RetentionPolicy, ScanComparison, ScanComparisonFilePage, ScanComparisonKind, ScanHistoryPage,
+    ScanIssue, ScanIssuePage, ScanSession, ScanState, StartScanRequest,
 };
 use filesystem::{
     native::{EntryKind, FileSystemProvider, NativeFileSystem},
@@ -42,6 +43,7 @@ struct ActiveJob {
 struct Shared {
     storage: Mutex<SqliteStorage>,
     job: Mutex<Option<ActiveJob>>,
+    duplicate_cancel: Mutex<Option<Arc<AtomicBool>>>,
     closed: AtomicBool,
     excluded: PathBuf,
     _lock: File,
@@ -127,6 +129,7 @@ impl ScanService {
             shared: Arc::new(Shared {
                 storage: Mutex::new(storage),
                 job: Mutex::new(None),
+                duplicate_cancel: Mutex::new(None),
                 closed: AtomicBool::new(false),
                 excluded,
                 _lock: lock,
@@ -148,6 +151,29 @@ impl ScanService {
     }
     pub fn compare(&self, newer: &str, older: &str) -> Result<ScanComparison, AppError> {
         guard(&self.shared.storage)?.compare_scans(parse_id(newer)?, parse_id(older)?)
+    }
+    pub fn comparison_files(
+        &self,
+        newer: &str,
+        older: &str,
+        kind: ScanComparisonKind,
+        after: Option<&str>,
+    ) -> Result<ScanComparisonFilePage, AppError> {
+        guard(&self.shared.storage)?.comparison_files(
+            parse_id(newer)?,
+            parse_id(older)?,
+            kind,
+            after.map(parse_id).transpose()?.unwrap_or(0),
+        )
+    }
+    pub fn retention_policy(&self) -> Result<RetentionPolicy, AppError> {
+        guard(&self.shared.storage)?.retention_policy()
+    }
+    pub fn set_retention_policy(&self, keep_latest: u16) -> Result<RetentionPolicy, AppError> {
+        if !(1..=1000).contains(&keep_latest) {
+            return Err(AppError::new(ErrorCode::InvalidTarget));
+        }
+        guard(&self.shared.storage)?.set_retention_policy(keep_latest)
     }
     pub fn delete_history(&self, scan_id: &str) -> Result<(), AppError> {
         guard(&self.shared.storage)?.delete_scan_history(parse_id(scan_id)?)
@@ -181,32 +207,97 @@ impl ScanService {
         guard(&self.shared.storage)?.duplicate_candidates(after)
     }
     pub fn confirm_duplicates(&self) -> Result<DuplicateGroupPage, AppError> {
-        let (scan_id, candidates) = guard(&self.shared.storage)?.duplicate_hash_candidates()?;
+        Ok(self.confirm_duplicates_with_progress(|_| true)?.groups)
+    }
+    pub fn confirm_duplicates_with_progress(
+        &self,
+        progress: impl Fn(DuplicateHashProgress) -> bool,
+    ) -> Result<DuplicateHashResult, AppError> {
+        let cancel = Arc::new(AtomicBool::new(false));
+        {
+            let mut active = guard(&self.shared.duplicate_cancel)?;
+            if active.is_some() {
+                return Err(AppError::new(ErrorCode::ScanBusy));
+            }
+            *active = Some(Arc::clone(&cancel));
+        }
+        let result = self.confirm_duplicates_with(&cancel, progress);
+        *guard(&self.shared.duplicate_cancel)? = None;
+        result
+    }
+    fn confirm_duplicates_with(
+        &self,
+        cancel: &AtomicBool,
+        progress: impl Fn(DuplicateHashProgress) -> bool,
+    ) -> Result<DuplicateHashResult, AppError> {
+        let (scan_id, mut candidates) = guard(&self.shared.storage)?.duplicate_hash_candidates()?;
+        let mut failures = Vec::new();
+        let total = candidates.len() as u64;
+        let publish = |phase: DuplicateHashPhase, processed: u64, total: u64| {
+            let update = DuplicateHashProgress {
+                scan_id: scan_id.to_string(),
+                phase,
+                processed_files: processed.to_string(),
+                total_files: total.to_string(),
+            };
+            if !progress(update) {
+                cancel.store(true, Ordering::Release);
+            }
+        };
+        publish(DuplicateHashPhase::Fingerprint, 0, total);
         let mut fingerprints = std::collections::BTreeMap::<(u64, String), Vec<_>>::new();
-        for candidate in candidates {
-            if !hash_candidate_unchanged(&NativeFileSystem, &candidate) {
+        for (index, candidate) in candidates.iter_mut().enumerate() {
+            if cancel.load(Ordering::Acquire) {
+                publish(DuplicateHashPhase::Cancelled, index as u64, total);
+                return self.duplicate_hash_result(scan_id, failures, true);
+            }
+            let signature = match hash_candidate_signature(&NativeFileSystem, candidate) {
+                Ok(signature) => signature,
+                Err(code) => {
+                    failures.push(hash_failure(candidate, code));
+                    guard(&self.shared.storage)?.clear_duplicate_hashes(scan_id, candidate.id)?;
+                    publish(DuplicateHashPhase::Fingerprint, index as u64 + 1, total);
+                    continue;
+                }
+            };
+            if candidate.hash_metadata_signature.as_deref() != Some(&signature)
+                && (candidate.partial_fingerprint.is_some() || candidate.content_hash.is_some())
+            {
                 guard(&self.shared.storage)?.clear_duplicate_hashes(scan_id, candidate.id)?;
-                continue;
+                candidate.partial_fingerprint = None;
+                candidate.content_hash = None;
             }
             let fingerprint = match candidate.partial_fingerprint.clone() {
                 Some(value) => value,
-                None => match hash_file(&candidate.path, candidate.size, true) {
-                    Ok(value) => {
-                        if !hash_candidate_unchanged(&NativeFileSystem, &candidate) {
+                None => match hash_file(&candidate.path, candidate.size, true, cancel) {
+                    Ok(Some(value)) => {
+                        if hash_candidate_signature(&NativeFileSystem, candidate).as_deref()
+                            != Ok(signature.as_str())
+                        {
+                            failures.push(hash_failure(candidate, ErrorCode::EntryChanged));
                             guard(&self.shared.storage)?
                                 .clear_duplicate_hashes(scan_id, candidate.id)?;
+                            publish(DuplicateHashPhase::Fingerprint, index as u64 + 1, total);
                             continue;
                         }
                         guard(&self.shared.storage)?.record_partial_fingerprint(
                             scan_id,
                             candidate.id,
                             &value,
+                            &signature,
                         )?;
+                        candidate.hash_metadata_signature = Some(signature.clone());
                         value
                     }
-                    Err(_) => {
+                    Ok(None) => {
+                        publish(DuplicateHashPhase::Cancelled, index as u64, total);
+                        return self.duplicate_hash_result(scan_id, failures, true);
+                    }
+                    Err(error) => {
+                        failures.push(hash_failure(candidate, error.code));
                         guard(&self.shared.storage)?
                             .clear_duplicate_hashes(scan_id, candidate.id)?;
+                        publish(DuplicateHashPhase::Fingerprint, index as u64 + 1, total);
                         continue;
                     }
                 },
@@ -214,28 +305,88 @@ impl ScanService {
             fingerprints
                 .entry((candidate.size, fingerprint))
                 .or_default()
-                .push(candidate);
+                .push(candidate.clone());
+            publish(DuplicateHashPhase::Fingerprint, index as u64 + 1, total);
         }
-        for (_, group) in fingerprints
+        let groups = fingerprints
             .into_iter()
             .filter(|(_, group)| group.len() > 1)
-        {
+            .map(|(_, group)| group)
+            .collect::<Vec<_>>();
+        let sha_total = groups.iter().map(Vec::len).sum::<usize>() as u64;
+        let mut sha_processed = 0_u64;
+        publish(DuplicateHashPhase::Sha256, sha_processed, sha_total);
+        for group in groups {
             for candidate in group {
+                if cancel.load(Ordering::Acquire) {
+                    publish(DuplicateHashPhase::Cancelled, sha_processed, sha_total);
+                    return self.duplicate_hash_result(scan_id, failures, true);
+                }
                 if candidate.content_hash.is_some() {
+                    sha_processed += 1;
+                    publish(DuplicateHashPhase::Sha256, sha_processed, sha_total);
                     continue;
                 }
-                let Ok(hash) = hash_file(&candidate.path, candidate.size, false) else {
-                    guard(&self.shared.storage)?.clear_duplicate_hashes(scan_id, candidate.id)?;
-                    continue;
+                let hash = match hash_file(&candidate.path, candidate.size, false, cancel) {
+                    Ok(Some(hash)) => hash,
+                    Ok(None) => {
+                        publish(DuplicateHashPhase::Cancelled, sha_processed, sha_total);
+                        return self.duplicate_hash_result(scan_id, failures, true);
+                    }
+                    Err(error) => {
+                        failures.push(hash_failure(&candidate, error.code));
+                        guard(&self.shared.storage)?
+                            .clear_duplicate_hashes(scan_id, candidate.id)?;
+                        sha_processed += 1;
+                        publish(DuplicateHashPhase::Sha256, sha_processed, sha_total);
+                        continue;
+                    }
                 };
-                if !hash_candidate_unchanged(&NativeFileSystem, &candidate) {
+                let signature = candidate
+                    .hash_metadata_signature
+                    .as_deref()
+                    .unwrap_or_default();
+                if hash_candidate_signature(&NativeFileSystem, &candidate).as_deref()
+                    != Ok(signature)
+                {
+                    failures.push(hash_failure(&candidate, ErrorCode::EntryChanged));
                     guard(&self.shared.storage)?.clear_duplicate_hashes(scan_id, candidate.id)?;
+                    sha_processed += 1;
+                    publish(DuplicateHashPhase::Sha256, sha_processed, sha_total);
                     continue;
                 }
-                guard(&self.shared.storage)?.record_content_hash(scan_id, candidate.id, &hash)?;
+                guard(&self.shared.storage)?.record_content_hash(
+                    scan_id,
+                    candidate.id,
+                    &hash,
+                    signature,
+                )?;
+                sha_processed += 1;
+                publish(DuplicateHashPhase::Sha256, sha_processed, sha_total);
             }
         }
-        guard(&self.shared.storage)?.confirmed_duplicates(None)
+        publish(DuplicateHashPhase::Complete, sha_total, sha_total);
+        self.duplicate_hash_result(scan_id, failures, false)
+    }
+    fn duplicate_hash_result(
+        &self,
+        _scan_id: i64,
+        failures: Vec<DuplicateHashFailure>,
+        cancelled: bool,
+    ) -> Result<DuplicateHashResult, AppError> {
+        Ok(DuplicateHashResult {
+            groups: guard(&self.shared.storage)?.confirmed_duplicates(None)?,
+            failures,
+            cancelled,
+        })
+    }
+    pub fn cancel_duplicate_hashing(&self) -> Result<(), AppError> {
+        let active = guard(&self.shared.duplicate_cancel)?;
+        let cancel = active
+            .as_ref()
+            .ok_or_else(|| AppError::new(ErrorCode::ScanNotFound))?;
+        cancel.store(true, Ordering::Release);
+        Ok(())
     }
     pub fn confirmed_duplicates(
         &self,
@@ -667,6 +818,9 @@ impl ScanService {
         Ok(session)
     }
     pub fn shutdown(&self) -> Result<(), AppError> {
+        if let Some(cancel) = guard(&self.shared.duplicate_cancel)?.as_ref() {
+            cancel.store(true, Ordering::Release);
+        }
         let active = {
             let mut job = guard(&self.shared.job)?;
             self.shared.closed.store(true, Ordering::Release);
@@ -694,12 +848,69 @@ fn hash_candidate_unchanged(
             || metadata.modified_at_ms == candidate.modified_at_ms)
 }
 
-fn hash_file(path: &Path, size: u64, partial: bool) -> Result<String, AppError> {
+fn hash_candidate_signature(
+    fs: &impl FileSystemProvider,
+    candidate: &storage::scans::HashCandidate,
+) -> Result<String, ErrorCode> {
+    let metadata = fs.metadata(&candidate.path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::PermissionDenied {
+            ErrorCode::PermissionDenied
+        } else {
+            ErrorCode::EntryChanged
+        }
+    })?;
+    if metadata.kind != EntryKind::File
+        || metadata.logical_size != candidate.size
+        || candidate.identity.is_some() && metadata.identity != candidate.identity
+        || candidate.modified_at_ms.is_some() && metadata.modified_at_ms != candidate.modified_at_ms
+    {
+        return Err(ErrorCode::EntryChanged);
+    }
+    let mut signature = Sha256::new();
+    signature.update(metadata.logical_size.to_le_bytes());
+    signature.update(metadata.modified_at_ms.unwrap_or(i64::MIN).to_le_bytes());
+    if let Some(identity) = metadata.identity {
+        signature.update((identity.len() as u64).to_le_bytes());
+        signature.update(identity.as_bytes());
+    }
+    Ok(signature
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+fn hash_failure(
+    candidate: &storage::scans::HashCandidate,
+    code: ErrorCode,
+) -> DuplicateHashFailure {
+    DuplicateHashFailure {
+        entry_id: candidate.id.to_string(),
+        path: candidate.path.to_string_lossy().into_owned(),
+        code,
+    }
+}
+
+fn hash_file(
+    path: &Path,
+    size: u64,
+    partial: bool,
+    cancel: &AtomicBool,
+) -> Result<Option<String>, AppError> {
     const CHUNK: u64 = 64 * 1024;
-    let mut file = File::open(path).map_err(|_| AppError::new(ErrorCode::EntryChanged))?;
+    let mut file = File::open(path).map_err(|error| {
+        AppError::new(if error.kind() == std::io::ErrorKind::PermissionDenied {
+            ErrorCode::PermissionDenied
+        } else {
+            ErrorCode::EntryChanged
+        })
+    })?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0; CHUNK.min(size) as usize];
     if partial {
+        if cancel.load(Ordering::Acquire) {
+            return Ok(None);
+        }
         file.read_exact(&mut buffer)
             .map_err(|_| AppError::new(ErrorCode::EntryChanged))?;
         hasher.update(&buffer);
@@ -713,6 +924,9 @@ fn hash_file(path: &Path, size: u64, partial: bool) -> Result<String, AppError> 
         }
     } else {
         loop {
+            if cancel.load(Ordering::Acquire) {
+                return Ok(None);
+            }
             let read = file
                 .read(&mut buffer)
                 .map_err(|_| AppError::new(ErrorCode::EntryChanged))?;
@@ -722,11 +936,13 @@ fn hash_file(path: &Path, size: u64, partial: bool) -> Result<String, AppError> 
             hasher.update(&buffer[..read]);
         }
     }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
+    Ok(Some(
+        hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    ))
 }
 
 struct ProtectedPathPolicy;
@@ -960,7 +1176,7 @@ fn finalize(
     let mut storage = guard(&shared.storage)?;
     let current = storage.get_scan(id)?;
     // A persistence or invariant failure takes precedence over cancellation.
-    match outcome {
+    let session = match outcome {
         Err(error) => storage.transition(id, ScanState::Failed, Some(&error)),
         Ok(state) if cancel.load(Ordering::Acquire) || state == ScanState::Cancelled => {
             if current.state != ScanState::Cancelling {
@@ -972,7 +1188,11 @@ fn finalize(
             storage.transition(id, ScanState::Finalizing, None)?;
             storage.transition(id, state, None)
         }
+    }?;
+    if let Err(error) = storage.apply_retention_policy() {
+        tracing::error!(component="history",operation="automatic_retention",scan_id=id,code=?error.code,"Automatic history cleanup failed");
     }
+    Ok(session)
 }
 
 #[cfg(test)]

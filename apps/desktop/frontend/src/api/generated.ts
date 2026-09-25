@@ -49,10 +49,17 @@ export type OldFileCriterion = "modified" | "created" | "accessed";
 export type OldFilePage = { items: Array<OldFile>, next_cursor: string | null, };
 export type ScanHistoryPage = { items: Array<ScanSession>, next_cursor: string | null, };
 export type ScanComparisonFile = { path: string, logical_size: string, previous_logical_size: string | null, };
-export type ScanComparison = { newer_scan_id: string, older_scan_id: string, files_delta: string, directories_delta: string, logical_size_delta: string, added_files_count: string, removed_files_count: string, modified_files_count: string, moved_files_count: string, added_files: Array<ScanComparisonFile>, removed_files: Array<ScanComparisonFile>, modified_files: Array<ScanComparisonFile>, details_limit: string, };
+export type ScanComparisonKind = "added" | "removed" | "modified";
+export type ScanComparisonFilePage = { items: Array<ScanComparisonFile>, next_cursor: string | null, };
+export type ScanComparison = { newer_scan_id: string, older_scan_id: string, files_delta: string, directories_delta: string, logical_size_delta: string, added_files_count: string, removed_files_count: string, modified_files_count: string, moved_files_count: string, };
 export type HistoryCleanupResult = { deleted_scan_ids: Array<string>, };
+export type RetentionPolicy = { keep_latest: number, };
 export type DuplicateGroup = { content_hash: string, size: string, files_count: string, reclaimable_size: string, };
 export type DuplicateGroupPage = { scan_id: string | null, items: Array<DuplicateGroup>, next_cursor: string | null, };
+export type DuplicateHashPhase = "fingerprint" | "sha256" | "complete" | "cancelled";
+export type DuplicateHashProgress = { scan_id: string, phase: DuplicateHashPhase, processed_files: string, total_files: string, };
+export type DuplicateHashFailure = { entry_id: string, path: string, code: ErrorCode, };
+export type DuplicateHashResult = { groups: DuplicateGroupPage, failures: Array<DuplicateHashFailure>, cancelled: boolean, };
 export type DuplicateFilePage = { items: Array<IndexedEntry>, next_cursor: string | null, };
 export type DuplicateDeleteFailure = { entry_id: string, code: ErrorCode, };
 export type DuplicateDeleteResult = { moved_entry_ids: Array<string>, failures: Array<DuplicateDeleteFailure>, };
@@ -123,6 +130,15 @@ export function getScanHistory(afterId: string | null = null): Promise<ScanHisto
 export function compareScans(newerScanId: string, olderScanId: string): Promise<ScanComparison> {
   return invoke<ScanComparison>('compare_scans', { newerScanId, olderScanId });
 }
+export function getScanComparisonFiles(newerScanId: string, olderScanId: string, kind: ScanComparisonKind, afterId: string | null = null): Promise<ScanComparisonFilePage> {
+  return invoke<ScanComparisonFilePage>('get_scan_comparison_files', { newerScanId, olderScanId, kind, afterId });
+}
+export function getRetentionPolicy(): Promise<RetentionPolicy> {
+  return invoke<RetentionPolicy>('get_retention_policy');
+}
+export function setRetentionPolicy(keepLatest: number): Promise<RetentionPolicy> {
+  return invoke<RetentionPolicy>('set_retention_policy', { keepLatest });
+}
 export function deleteScanHistory(scanId: string): Promise<void> {
   return invoke<void>('delete_scan_history', { scanId });
 }
@@ -132,8 +148,13 @@ export function cleanupScanHistory(keepLatest: number, protectedScanId: string |
 export function getDuplicateCandidates(afterSize: string | null = null): Promise<DuplicateGroupPage> {
   return invoke<DuplicateGroupPage>('get_duplicate_candidates', { afterSize });
 }
-export function confirmDuplicates(): Promise<DuplicateGroupPage> {
-  return invoke<DuplicateGroupPage>('confirm_duplicates');
+export function confirmDuplicates(onProgress: (update: DuplicateHashProgress) => void): Promise<DuplicateHashResult> {
+  const channel = new Channel<DuplicateHashProgress>();
+  channel.onmessage = onProgress;
+  return invoke<DuplicateHashResult>('confirm_duplicates', { onProgress: channel });
+}
+export function cancelDuplicateHashing(): Promise<void> {
+  return invoke<void>('cancel_duplicate_hashing');
 }
 export function getConfirmedDuplicates(afterId: string | null = null): Promise<DuplicateGroupPage> {
   return invoke<DuplicateGroupPage>('get_confirmed_duplicates', { afterId });

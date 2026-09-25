@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  cancelDuplicateHashing,
   cleanupScanHistory,
   compareScans,
   confirmDuplicates,
@@ -7,11 +8,19 @@ import {
   deleteScanHistory,
   getConfirmedDuplicates,
   getDuplicateFiles,
+  getRetentionPolicy,
+  getScanComparisonFiles,
   getScanHistory,
+  setRetentionPolicy,
+  type DuplicateDeleteFailure,
   type DuplicateFilePage,
   type DuplicateGroupPage,
+  type DuplicateHashFailure,
+  type DuplicateHashProgress,
+  type ErrorCode,
   type ScanComparison,
-  type ScanComparisonFile,
+  type ScanComparisonFilePage,
+  type ScanComparisonKind,
   type ScanHistoryPage,
   type ScanSession,
 } from "./api/generated";
@@ -45,6 +54,12 @@ export function HistoryDuplicatesPanel({
   const [error, setError] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [duplicateLoading, setDuplicateLoading] = useState(false);
+  const [hashProgress, setHashProgress] =
+    useState<DuplicateHashProgress | null>(null);
+  const [hashFailures, setHashFailures] = useState<DuplicateHashFailure[]>([]);
+  const [deleteFailures, setDeleteFailures] = useState<
+    Array<DuplicateDeleteFailure & { path: string }>
+  >([]);
 
   async function loadHistory(after: string | null = null) {
     setHistoryLoading(true);
@@ -67,8 +82,27 @@ export function HistoryDuplicatesPanel({
   }
 
   useEffect(() => {
-    if (enabled) void loadHistory();
+    if (enabled) {
+      void loadHistory();
+      void getRetentionPolicy()
+        .then((policy) => setRetention(policy.keep_latest))
+        .catch((reason: unknown) => setError(errorMessage(reason)));
+    }
   }, [enabled]);
+
+  async function updateRetention(keepLatest: number) {
+    setRetention(keepLatest);
+    setError(null);
+    try {
+      const policy = await setRetentionPolicy(keepLatest);
+      setRetention(policy.keep_latest);
+      setNotice(
+        `Автоочистка сохранена: хранить последних ${policy.keep_latest}.`,
+      );
+    } catch (reason: unknown) {
+      setError(errorMessage(reason));
+    }
+  }
 
   function toggleComparedScan(scanId: string) {
     setComparison(null);
@@ -129,8 +163,17 @@ export function HistoryDuplicatesPanel({
     setDuplicateLoading(true);
     setError(null);
     setNotice(null);
+    setHashFailures([]);
+    setDeleteFailures([]);
     try {
-      setDuplicates(await confirmDuplicates());
+      const result = await confirmDuplicates(setHashProgress);
+      setDuplicates(result.groups);
+      setHashFailures(result.failures);
+      if (result.cancelled) {
+        setNotice(
+          "Проверка остановлена. Следующий запуск продолжит с сохранённого кеша.",
+        );
+      }
       setExpanded({});
       setSelectedEntries(new Set());
       setConfirmDelete(false);
@@ -138,6 +181,15 @@ export function HistoryDuplicatesPanel({
       setError(errorMessage(reason));
     } finally {
       setDuplicateLoading(false);
+      setHashProgress(null);
+    }
+  }
+
+  async function cancelHashing() {
+    try {
+      await cancelDuplicateHashing();
+    } catch (reason: unknown) {
+      setError(errorMessage(reason));
     }
   }
 
@@ -221,11 +273,23 @@ export function HistoryDuplicatesPanel({
     setError(null);
     setNotice(null);
     try {
+      const paths = Object.values(expanded)
+        .flatMap((page) => page.items)
+        .reduce<Record<string, string>>((result, entry) => {
+          result[entry.id] = entry.path;
+          return result;
+        }, {});
       const result = await deleteDuplicateEntries(duplicates.scan_id, [
         ...selectedEntries,
       ]);
       setNotice(
         `Перемещено в корзину: ${result.moved_entry_ids.length}. Пропущено изменившихся или недоступных: ${result.failures.length}.`,
+      );
+      setDeleteFailures(
+        result.failures.map((failure) => ({
+          ...failure,
+          path: paths[failure.entry_id] ?? `#${failure.entry_id}`,
+        })),
       );
       setSelectedEntries(new Set());
       setConfirmDelete(false);
@@ -249,7 +313,8 @@ export function HistoryDuplicatesPanel({
           <div>
             <h3>История сканирований</h3>
             <p className="hint">
-              Выберите любые два результата одного каталога.
+              Выберите любые два результата одного каталога. Политика хранения
+              применяется автоматически после каждого scan.
             </p>
           </div>
           <div className="retention-controls">
@@ -258,7 +323,9 @@ export function HistoryDuplicatesPanel({
               <select
                 aria-label="Количество сохраняемых сканирований"
                 value={retention}
-                onChange={(event) => setRetention(Number(event.target.value))}
+                onChange={(event) =>
+                  void updateRetention(Number(event.target.value))
+                }
               >
                 {[5, 10, 25, 50].map((value) => (
                   <option key={value} value={value}>
@@ -281,6 +348,7 @@ export function HistoryDuplicatesPanel({
           return (
             <div
               className={`history-row${active ? " active" : ""}`}
+              data-scan-id={scan.id}
               key={scan.id}
             >
               <label className="history-choice">
@@ -350,7 +418,30 @@ export function HistoryDuplicatesPanel({
           >
             {duplicateLoading ? "Проверяем…" : "Проверить содержимое"}
           </button>
+          {duplicateLoading && hashProgress && (
+            <button className="secondary" onClick={() => void cancelHashing()}>
+              Остановить проверку
+            </button>
+          )}
         </div>
+        {hashProgress && (
+          <p role="status">
+            {hashProgress.phase === "fingerprint" ? "Fingerprint" : "SHA-256"}:{" "}
+            {hashProgress.processed_files} / {hashProgress.total_files}
+          </p>
+        )}
+        {hashFailures.length > 0 && (
+          <FailureList
+            title="Не удалось проверить файлы"
+            failures={hashFailures}
+          />
+        )}
+        {deleteFailures.length > 0 && (
+          <FailureList
+            title="Не удалось переместить файлы"
+            failures={deleteFailures}
+          />
+        )}
         {duplicates &&
           (duplicates.items.length ? (
             <div className="duplicate-groups">
@@ -468,11 +559,6 @@ export function HistoryDuplicatesPanel({
 }
 
 function ComparisonDetails({ comparison }: { comparison: ScanComparison }) {
-  const truncated = [
-    comparison.added_files_count,
-    comparison.removed_files_count,
-    comparison.modified_files_count,
-  ].some((count) => BigInt(count) > BigInt(comparison.details_limit));
   return (
     <div className="comparison-details">
       <p>
@@ -489,25 +575,22 @@ function ComparisonDetails({ comparison }: { comparison: ScanComparison }) {
       <ComparisonList
         title="Добавленные файлы"
         count={comparison.added_files_count}
-        files={comparison.added_files}
+        comparison={comparison}
+        kind="added"
       />
       <ComparisonList
         title="Удалённые файлы"
         count={comparison.removed_files_count}
-        files={comparison.removed_files}
+        comparison={comparison}
+        kind="removed"
       />
       <ComparisonList
         title="Изменённые файлы"
         count={comparison.modified_files_count}
-        files={comparison.modified_files}
+        comparison={comparison}
+        kind="modified"
         modified
       />
-      {truncated && (
-        <p className="hint">
-          Для каждой категории показаны первые {comparison.details_limit}{" "}
-          файлов.
-        </p>
-      )}
     </div>
   );
 }
@@ -515,38 +598,135 @@ function ComparisonDetails({ comparison }: { comparison: ScanComparison }) {
 function ComparisonList({
   title,
   count,
-  files,
+  comparison,
+  kind,
   modified = false,
 }: {
   title: string;
   count: string;
-  files: ScanComparisonFile[];
+  comparison: ScanComparison;
+  kind: ScanComparisonKind;
   modified?: boolean;
 }) {
+  const [page, setPage] = useState<ScanComparisonFilePage | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setPage(null);
+    setLoading(true);
+    setLoadError(null);
+    void getScanComparisonFiles(
+      comparison.newer_scan_id,
+      comparison.older_scan_id,
+      kind,
+    )
+      .then((result) => {
+        if (active) setPage(result);
+      })
+      .catch((reason: unknown) => {
+        if (active) setLoadError(errorMessage(reason));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [comparison.newer_scan_id, comparison.older_scan_id, kind]);
+
+  async function loadMore() {
+    if (!page?.next_cursor) return;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const next = await getScanComparisonFiles(
+        comparison.newer_scan_id,
+        comparison.older_scan_id,
+        kind,
+        page.next_cursor,
+      );
+      setPage({
+        items: [...page.items, ...next.items],
+        next_cursor: next.next_cursor,
+      });
+    } catch (reason: unknown) {
+      setLoadError(errorMessage(reason));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const files = page?.items ?? [];
   return (
     <details>
       <summary>
         {title} ({count})
       </summary>
       {files.length ? (
-        <ul className="comparison-files">
-          {files.map((file, index) => (
-            <li key={`${file.path}-${index}`}>
-              <span>{file.path}</span>
-              <span>
-                {modified && file.previous_logical_size
-                  ? `${formatBytes(file.previous_logical_size)} → `
-                  : ""}
-                {formatBytes(file.logical_size)}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="comparison-files">
+            {files.map((file, index) => (
+              <li key={`${file.path}-${index}`}>
+                <span>{file.path}</span>
+                <span>
+                  {modified && file.previous_logical_size
+                    ? `${formatBytes(file.previous_logical_size)} → `
+                    : ""}
+                  {formatBytes(file.logical_size)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {page?.next_cursor && (
+            <button
+              className="secondary"
+              disabled={loading}
+              onClick={() => void loadMore()}
+            >
+              Показать ещё
+            </button>
+          )}
+        </>
+      ) : loading ? (
+        <p role="status">Загружаем изменения…</p>
       ) : (
         <p className="hint">Нет файлов.</p>
       )}
+      {loadError && <p role="alert">{loadError}</p>}
     </details>
   );
+}
+
+function FailureList({
+  title,
+  failures,
+}: {
+  title: string;
+  failures: Array<{ path: string; code: ErrorCode }>;
+}) {
+  return (
+    <div className="duplicate-failures">
+      <strong>{title}</strong>
+      <ul>
+        {failures.map((failure, index) => (
+          <li key={`${failure.path}-${index}`}>
+            <span>{failure.path}</span>
+            <span>{failureMessage(failure.code)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function failureMessage(code: ErrorCode): string {
+  return errorMessage({
+    code,
+    user_message_key: `errors.${code}`,
+    recoverable: true,
+  });
 }
 
 function readableHistoryState(scan: ScanSession): boolean {

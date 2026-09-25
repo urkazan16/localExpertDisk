@@ -1,0 +1,90 @@
+{
+  "schema_version": 4,
+  "runner_version": "0.1.0",
+  "profile": "WIDE-1M-GATE",
+  "environment": {
+    "os": "macos",
+    "architecture": "x86_64"
+  },
+  "root": "/private/var/folders/lh/nflnt1916gd3st38pcdm1m2m0000gn/T/local-expert-disk-1m-TvK5Un/fixture",
+  "started_at_ms": 1790369154005,
+  "fixture": {
+    "files": 1000000,
+    "directories": 0,
+    "depth": 0,
+    "file_size": 0
+  },
+  "fixture_generation_ms": 207512,
+  "iterations": 1,
+  "scan_durations_ms": [172591],
+  "processed_entries": "1000001",
+  "duration_ms": 172591,
+  "entries_per_second": 5794.041316482567,
+  "peak_rss_bytes": 15540224,
+  "batch_commits": 245,
+  "ipc_progress_events": 246,
+  "state": "completed",
+  "counts": {
+    "files": "1000000",
+    "directories": "1",
+    "symlinks": "0",
+    "skipped": "0",
+    "errors": "0"
+  },
+  "sizes": {
+    "logical_bytes": "0",
+    "allocated_bytes": "0",
+    "unique_allocated_bytes": "0",
+    "sqlite_bytes": 459050960
+  },
+  "analyzer": {
+    "total_duration_ms": 2695,
+    "root_duration_ms": 0,
+    "explorer_first_page_duration_ms": 0,
+    "categories_duration_ms": 272,
+    "first_content_duration_ms": 272,
+    "directory_map_duration_ms": 2421,
+    "large_files_duration_ms": 0,
+    "explorer_items": 100,
+    "directory_map_nodes": 9,
+    "directory_map_remainder_objects": "999992",
+    "peak_rss_before_bytes": 14057472,
+    "peak_rss_after_bytes": 15540224
+  },
+  "regression": {
+    "passed": true,
+    "checks": [
+      {
+        "metric": "entries_per_second",
+        "actual": 5794.041316482567,
+        "limit": 3000.0,
+        "passed": true
+      },
+      {
+        "metric": "peak_rss_bytes",
+        "actual": 15540224.0,
+        "limit": 67108864.0,
+        "passed": true
+      },
+      {
+        "metric": "sqlite_bytes_per_entry",
+        "actual": 459.05050094949905,
+        "limit": 512.0,
+        "passed": true
+      },
+      {
+        "metric": "directory_map_duration_ms",
+        "actual": 2421.0,
+        "limit": 3000.0,
+        "passed": true
+      },
+      {
+        "metric": "ipc_events_per_million_entries",
+        "actual": 245.99975400024599,
+        "limit": 512.0,
+        "passed": true
+      }
+    ],
+    "frontend_first_display_limit_ms": 2000
+  }
+}

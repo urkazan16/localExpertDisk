@@ -2,9 +2,11 @@
 
 use domain::{
     AppError, AppInfo, BatchOperationResult, CategorySummary, DirectoryMap, DirectoryMapMetric,
-    DuplicateDeleteResult, DuplicateFilePage, DuplicateGroupPage, EntryPage, ErrorCode,
-    FileCategory, FileSort, HistoryCleanupResult, IndexedEntry, OldFileCriterion, OldFilePage,
-    ScanComparison, ScanHistoryPage, ScanIssuePage, ScanSession, StartScanRequest, VolumeInfo,
+    DuplicateDeleteResult, DuplicateFilePage, DuplicateGroupPage, DuplicateHashProgress,
+    DuplicateHashResult, EntryPage, ErrorCode, FileCategory, FileSort, HistoryCleanupResult,
+    IndexedEntry, OldFileCriterion, OldFilePage, RetentionPolicy, ScanComparison,
+    ScanComparisonFilePage, ScanComparisonKind, ScanHistoryPage, ScanIssuePage, ScanSession,
+    StartScanRequest, VolumeInfo,
 };
 use filesystem::volumes::{LocalVolumes, VolumeProvider};
 use services::scans::ScanService;
@@ -297,6 +299,40 @@ async fn compare_scans(
         .map_err(|_| internal())?
 }
 #[tauri::command]
+async fn get_scan_comparison_files(
+    state: tauri::State<'_, AppState>,
+    newer_scan_id: String,
+    older_scan_id: String,
+    kind: ScanComparisonKind,
+    after_id: Option<String>,
+) -> Result<ScanComparisonFilePage, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        service.comparison_files(&newer_scan_id, &older_scan_id, kind, after_id.as_deref())
+    })
+    .await
+    .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn get_retention_policy(
+    state: tauri::State<'_, AppState>,
+) -> Result<RetentionPolicy, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.retention_policy())
+        .await
+        .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn set_retention_policy(
+    state: tauri::State<'_, AppState>,
+    keep_latest: u16,
+) -> Result<RetentionPolicy, AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.set_retention_policy(keep_latest))
+        .await
+        .map_err(|_| internal())?
+}
+#[tauri::command]
 async fn delete_scan_history(
     state: tauri::State<'_, AppState>,
     scan_id: String,
@@ -334,9 +370,19 @@ async fn get_duplicate_candidates(
 #[tauri::command]
 async fn confirm_duplicates(
     state: tauri::State<'_, AppState>,
-) -> Result<DuplicateGroupPage, AppError> {
+    on_progress: Channel<DuplicateHashProgress>,
+) -> Result<DuplicateHashResult, AppError> {
     let service = state.service()?;
-    tauri::async_runtime::spawn_blocking(move || service.confirm_duplicates())
+    tauri::async_runtime::spawn_blocking(move || {
+        service.confirm_duplicates_with_progress(move |update| on_progress.send(update).is_ok())
+    })
+    .await
+    .map_err(|_| internal())?
+}
+#[tauri::command]
+async fn cancel_duplicate_hashing(state: tauri::State<'_, AppState>) -> Result<(), AppError> {
+    let service = state.service()?;
+    tauri::async_runtime::spawn_blocking(move || service.cancel_duplicate_hashing())
         .await
         .map_err(|_| internal())?
 }
@@ -478,10 +524,14 @@ fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         move_entries_to_trash,
         get_scan_history,
         compare_scans,
+        get_scan_comparison_files,
+        get_retention_policy,
+        set_retention_policy,
         delete_scan_history,
         cleanup_scan_history,
         get_duplicate_candidates,
         confirm_duplicates,
+        cancel_duplicate_hashing,
         get_confirmed_duplicates,
         get_duplicate_files,
         delete_duplicate_entries
@@ -555,7 +605,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let storage = ScanService::open(&directory.path().join("ipc.db")).unwrap();
         let response = invoke(AppState(Ok(storage))).unwrap();
-        assert_eq!(response.schema_version, 12);
+        assert_eq!(response.schema_version, 14);
         assert_eq!(response.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(
             response.capabilities,

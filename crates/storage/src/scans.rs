@@ -4,8 +4,9 @@ use domain::{
     AppError, CategorySummary, DirectoryMap, DirectoryMapMetric, DirectoryMapNode,
     DirectoryMapRemainder, DuplicateFilePage, DuplicateGroup, DuplicateGroupPage, EntryPage,
     ErrorCode, FileCategory, FileSort, HistoryCleanupResult, IndexedEntry, IndexedEntryKind,
-    OldFile, OldFileCriterion, OldFilePage, ScanComparison, ScanComparisonFile, ScanHistoryPage,
-    ScanIssue, ScanIssuePage, ScanSession, ScanState,
+    OldFile, OldFileCriterion, OldFilePage, RetentionPolicy, ScanComparison, ScanComparisonFile,
+    ScanComparisonFilePage, ScanComparisonKind, ScanHistoryPage, ScanIssue, ScanIssuePage,
+    ScanSession, ScanState,
 };
 use filesystem::native::{decode_path, encode_path, EntryKind, EntryMetadata};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -56,6 +57,7 @@ pub struct HashCandidate {
     pub modified_at_ms: Option<i64>,
     pub partial_fingerprint: Option<String>,
     pub content_hash: Option<String>,
+    pub hash_metadata_signature: Option<String>,
 }
 type DirectoryMapChild = (IndexedEntry, i64);
 type DirectoryMapChildren = (Vec<DirectoryMapChild>, usize, i64);
@@ -179,17 +181,7 @@ fn parse_name_cursor(cursor: Option<&str>) -> Result<Option<(String, i64)>, AppE
         .transpose()
 }
 const SELECT_SESSION: &str = "SELECT id,root_display,state,files_count,directories_count,symlinks_count,skipped_count,logical_size,allocated_size,unique_allocated_size,errors_count,started_at_ms,finished_at_ms,failure FROM scan_sessions";
-const FILE_CATEGORY_SQL: &str = "CASE
- WHEN lower(name) GLOB '*.mp4' OR lower(name) GLOB '*.mkv' OR lower(name) GLOB '*.mov' OR lower(name) GLOB '*.avi' OR lower(name) GLOB '*.webm' THEN 'video'
- WHEN lower(name) GLOB '*.jpg' OR lower(name) GLOB '*.jpeg' OR lower(name) GLOB '*.png' OR lower(name) GLOB '*.gif' OR lower(name) GLOB '*.heic' OR lower(name) GLOB '*.webp' THEN 'images'
- WHEN lower(name) GLOB '*.mp3' OR lower(name) GLOB '*.m4a' OR lower(name) GLOB '*.wav' OR lower(name) GLOB '*.flac' OR lower(name) GLOB '*.aac' THEN 'audio'
- WHEN lower(name) GLOB '*.pdf' OR lower(name) GLOB '*.doc' OR lower(name) GLOB '*.docx' OR lower(name) GLOB '*.xls' OR lower(name) GLOB '*.xlsx' OR lower(name) GLOB '*.pptx' OR lower(name) GLOB '*.txt' THEN 'documents'
- WHEN lower(name) GLOB '*.zip' OR lower(name) GLOB '*.tar' OR lower(name) GLOB '*.gz' OR lower(name) GLOB '*.7z' OR lower(name) GLOB '*.rar' THEN 'archives'
- WHEN lower(name) GLOB '*.app' OR lower(name) GLOB '*.exe' OR lower(name) GLOB '*.dmg' THEN 'applications'
- WHEN lower(name) GLOB '*.rs' OR lower(name) GLOB '*.ts' OR lower(name) GLOB '*.tsx' OR lower(name) GLOB '*.js' OR lower(name) GLOB '*.py' OR lower(name) GLOB '*.java' THEN 'development'
- WHEN lower(name) GLOB '*.iso' OR lower(name) GLOB '*.img' THEN 'disk_images'
- WHEN lower(name) GLOB '*.sqlite' OR lower(name) GLOB '*.db' OR lower(name) GLOB '*.sql' THEN 'databases'
- ELSE 'other' END";
+const FILE_CATEGORY_SQL: &str = "category";
 fn category_key(category: FileCategory) -> &'static str {
     match category {
         FileCategory::Video => "video",
@@ -329,64 +321,6 @@ impl SqliteStorage {
             params![parse_id(&newer.id)?, parse_id(&older.id)?],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         ).map_err(storage_error)?;
-        const DETAILS_LIMIT: i64 = 100;
-        let details = |sql: &str| -> Result<Vec<ScanComparisonFile>, AppError> {
-            let mut statement = self.connection.prepare(sql).map_err(storage_error)?;
-            let result = statement
-                .query_map(
-                    params![parse_id(&newer.id)?, parse_id(&older.id)?, DETAILS_LIMIT],
-                    |row| {
-                        let path = decode_path(row.get(0)?).map_err(|error| {
-                            rusqlite::Error::FromSqlConversionFailure(
-                                0,
-                                rusqlite::types::Type::Blob,
-                                Box::new(error),
-                            )
-                        })?;
-                        Ok(ScanComparisonFile {
-                            path: path.to_string_lossy().into_owned(),
-                            logical_size: row.get::<_, i64>(1)?.to_string(),
-                            previous_logical_size: row
-                                .get::<_, Option<i64>>(2)?
-                                .map(|value| value.to_string()),
-                        })
-                    },
-                )
-                .map_err(storage_error)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(storage_error);
-            result
-        };
-        let added_files = details(
-            "SELECT n.path,n.logical_size,NULL FROM entries n
-             WHERE n.scan_id=?1 AND n.parent_id IS NOT NULL AND n.kind='file'
-               AND NOT EXISTS (SELECT 1 FROM entries o WHERE o.scan_id=?2 AND o.kind='file'
-                 AND ((n.identity IS NOT NULL AND n.identity=o.identity)
-                   OR (n.identity IS NULL AND o.identity IS NULL AND n.path=o.path)))
-             ORDER BY n.path,n.id LIMIT ?3",
-        )?;
-        let removed_files = details(
-            "SELECT o.path,o.logical_size,NULL FROM entries o
-             WHERE o.scan_id=?2 AND o.parent_id IS NOT NULL AND o.kind='file'
-               AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.scan_id=?1 AND n.kind='file'
-                 AND ((n.identity IS NOT NULL AND n.identity=o.identity)
-                   OR (n.identity IS NULL AND o.identity IS NULL AND n.path=o.path)))
-             ORDER BY o.path,o.id LIMIT ?3",
-        )?;
-        let modified_files = details(
-            "SELECT n.path,n.logical_size,
-               (SELECT o.logical_size FROM entries o WHERE o.scan_id=?2 AND o.kind='file'
-                 AND ((n.identity IS NOT NULL AND n.identity=o.identity)
-                   OR (n.identity IS NULL AND o.identity IS NULL AND n.path=o.path))
-                 ORDER BY o.id LIMIT 1)
-             FROM entries n
-             WHERE n.scan_id=?1 AND n.parent_id IS NOT NULL AND n.kind='file'
-               AND EXISTS (SELECT 1 FROM entries o WHERE o.scan_id=?2 AND o.kind='file'
-                 AND ((n.identity IS NOT NULL AND n.identity=o.identity)
-                   OR (n.identity IS NULL AND o.identity IS NULL AND n.path=o.path))
-                 AND (n.logical_size<>o.logical_size OR n.modified_at_ms IS NOT o.modified_at_ms))
-             ORDER BY n.path,n.id LIMIT ?3",
-        )?;
         Ok(ScanComparison {
             newer_scan_id: newer.id,
             older_scan_id: older.id,
@@ -397,10 +331,87 @@ impl SqliteStorage {
             removed_files_count: counts.1.to_string(),
             modified_files_count: counts.2.to_string(),
             moved_files_count: counts.3.to_string(),
-            added_files,
-            removed_files,
-            modified_files,
-            details_limit: DETAILS_LIMIT.to_string(),
+        })
+    }
+    pub fn comparison_files(
+        &self,
+        newer: i64,
+        older: i64,
+        kind: ScanComparisonKind,
+        after: i64,
+    ) -> Result<ScanComparisonFilePage, AppError> {
+        let newer_scan = self.get_scan(newer)?;
+        let older_scan = self.get_scan(older)?;
+        self.ensure_queryable(newer)?;
+        self.ensure_queryable(older)?;
+        if newer_scan.root_path != older_scan.root_path {
+            return Err(AppError::new(ErrorCode::IncompatibleScans));
+        }
+        let sql = match kind {
+            ScanComparisonKind::Added => {
+                "SELECT n.path,n.logical_size,NULL,n.id FROM entries n
+             WHERE n.scan_id=?1 AND n.parent_id IS NOT NULL AND n.kind='file' AND n.id>?3
+               AND NOT EXISTS (SELECT 1 FROM entries o WHERE o.scan_id=?2 AND o.kind='file'
+                 AND ((n.identity IS NOT NULL AND n.identity=o.identity)
+                   OR (n.identity IS NULL AND o.identity IS NULL AND n.path=o.path)))
+             ORDER BY n.id LIMIT ?4"
+            }
+            ScanComparisonKind::Removed => {
+                "SELECT o.path,o.logical_size,NULL,o.id FROM entries o
+             WHERE o.scan_id=?2 AND o.parent_id IS NOT NULL AND o.kind='file' AND o.id>?3
+               AND NOT EXISTS (SELECT 1 FROM entries n WHERE n.scan_id=?1 AND n.kind='file'
+                 AND ((n.identity IS NOT NULL AND n.identity=o.identity)
+                   OR (n.identity IS NULL AND o.identity IS NULL AND n.path=o.path)))
+             ORDER BY o.id LIMIT ?4"
+            }
+            ScanComparisonKind::Modified => {
+                "SELECT n.path,n.logical_size,
+               (SELECT o.logical_size FROM entries o WHERE o.scan_id=?2 AND o.kind='file'
+                 AND ((n.identity IS NOT NULL AND n.identity=o.identity)
+                   OR (n.identity IS NULL AND o.identity IS NULL AND n.path=o.path))
+                 ORDER BY o.id LIMIT 1),n.id
+             FROM entries n
+             WHERE n.scan_id=?1 AND n.parent_id IS NOT NULL AND n.kind='file' AND n.id>?3
+               AND EXISTS (SELECT 1 FROM entries o WHERE o.scan_id=?2 AND o.kind='file'
+                 AND ((n.identity IS NOT NULL AND n.identity=o.identity)
+                   OR (n.identity IS NULL AND o.identity IS NULL AND n.path=o.path))
+                 AND (n.logical_size<>o.logical_size OR n.modified_at_ms IS NOT o.modified_at_ms))
+             ORDER BY n.id LIMIT ?4"
+            }
+        };
+        let mut statement = self.connection.prepare(sql).map_err(storage_error)?;
+        let mut rows = statement
+            .query_map(params![newer, older, after, 101], |row| {
+                let path = decode_path(row.get(0)?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Blob,
+                        Box::new(error),
+                    )
+                })?;
+                Ok((
+                    ScanComparisonFile {
+                        path: path.to_string_lossy().into_owned(),
+                        logical_size: row.get::<_, i64>(1)?.to_string(),
+                        previous_logical_size: row
+                            .get::<_, Option<i64>>(2)?
+                            .map(|value| value.to_string()),
+                    },
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(storage_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(storage_error)?;
+        let next_cursor = if rows.len() > 100 {
+            rows.pop();
+            rows.last().map(|(_, id)| id.to_string())
+        } else {
+            None
+        };
+        Ok(ScanComparisonFilePage {
+            items: rows.into_iter().map(|(item, _)| item).collect(),
+            next_cursor,
         })
     }
     pub fn delete_scan_history(&mut self, scan_id: i64) -> Result<(), AppError> {
@@ -469,6 +480,30 @@ impl SqliteStorage {
         Ok(HistoryCleanupResult {
             deleted_scan_ids: ids.into_iter().map(|id| id.to_string()).collect(),
         })
+    }
+    pub fn retention_policy(&self) -> Result<RetentionPolicy, AppError> {
+        let keep_latest = self
+            .connection
+            .query_row(
+                "SELECT value FROM app_settings WHERE key='scan_retention_keep_latest'",
+                [],
+                |row| row.get::<_, u16>(0),
+            )
+            .map_err(storage_error)?;
+        Ok(RetentionPolicy { keep_latest })
+    }
+    pub fn set_retention_policy(&mut self, keep_latest: u16) -> Result<RetentionPolicy, AppError> {
+        self.connection
+            .execute(
+                "UPDATE app_settings SET value=?1 WHERE key='scan_retention_keep_latest'",
+                [keep_latest],
+            )
+            .map_err(storage_error)?;
+        Ok(RetentionPolicy { keep_latest })
+    }
+    pub fn apply_retention_policy(&mut self) -> Result<HistoryCleanupResult, AppError> {
+        let policy = self.retention_policy()?;
+        self.cleanup_scan_history(usize::from(policy.keep_latest), None)
     }
     pub fn transition(
         &mut self,
@@ -1426,7 +1461,7 @@ impl SqliteStorage {
             .ok_or_else(|| AppError::new(ErrorCode::ScanNotReady))?;
         let mut statement = self.connection.prepare(
             "SELECT e.id,e.path,e.logical_size,e.identity,e.modified_at_ms,
-                    e.partial_fingerprint,e.content_hash FROM entries e
+                    e.partial_fingerprint,e.content_hash,e.hash_metadata_signature FROM entries e
              WHERE e.scan_id=?1 AND e.kind='file' AND e.logical_size IN (
                SELECT logical_size FROM entries WHERE scan_id=?1 AND kind='file' GROUP BY logical_size HAVING COUNT(*)>1
              ) ORDER BY e.logical_size,e.id",
@@ -1449,6 +1484,7 @@ impl SqliteStorage {
                     modified_at_ms: row.get(4)?,
                     partial_fingerprint: row.get(5)?,
                     content_hash: row.get(6)?,
+                    hash_metadata_signature: row.get(7)?,
                 })
             })
             .map_err(storage_error)?
@@ -1461,11 +1497,12 @@ impl SqliteStorage {
         scan_id: i64,
         entry_id: i64,
         hash: &str,
+        signature: &str,
     ) -> Result<(), AppError> {
         self.connection
             .execute(
-                "UPDATE entries SET content_hash=?3 WHERE scan_id=?1 AND id=?2",
-                params![scan_id, entry_id, hash],
+                "UPDATE entries SET content_hash=?3,hash_metadata_signature=?4 WHERE scan_id=?1 AND id=?2",
+                params![scan_id, entry_id, hash, signature],
             )
             .map_err(storage_error)?;
         Ok(())
@@ -1475,11 +1512,12 @@ impl SqliteStorage {
         scan_id: i64,
         entry_id: i64,
         fingerprint: &str,
+        signature: &str,
     ) -> Result<(), AppError> {
         self.connection
             .execute(
-                "UPDATE entries SET partial_fingerprint=?3 WHERE scan_id=?1 AND id=?2",
-                params![scan_id, entry_id, fingerprint],
+                "UPDATE entries SET partial_fingerprint=?3,hash_metadata_signature=?4 WHERE scan_id=?1 AND id=?2",
+                params![scan_id, entry_id, fingerprint, signature],
             )
             .map_err(storage_error)?;
         Ok(())
@@ -1487,7 +1525,7 @@ impl SqliteStorage {
     pub fn clear_duplicate_hashes(&mut self, scan_id: i64, entry_id: i64) -> Result<(), AppError> {
         self.connection
             .execute(
-                "UPDATE entries SET partial_fingerprint=NULL,content_hash=NULL
+                "UPDATE entries SET partial_fingerprint=NULL,content_hash=NULL,hash_metadata_signature=NULL
                  WHERE scan_id=?1 AND id=?2",
                 params![scan_id, entry_id],
             )
@@ -1627,7 +1665,7 @@ impl SqliteStorage {
             .map_err(storage_error)?;
         let survivors_sql = format!(
             "SELECT e.id,e.path,e.logical_size,e.identity,e.modified_at_ms,
-                    e.partial_fingerprint,e.content_hash
+                    e.partial_fingerprint,e.content_hash,e.hash_metadata_signature
              FROM entries e
              WHERE e.scan_id=? AND e.kind='file'
                AND e.content_hash IN (SELECT selected.content_hash FROM entries selected
@@ -1662,6 +1700,7 @@ impl SqliteStorage {
                     modified_at_ms: row.get(4)?,
                     partial_fingerprint: row.get(5)?,
                     content_hash: row.get(6)?,
+                    hash_metadata_signature: row.get(7)?,
                 })
             })
             .map_err(storage_error)?

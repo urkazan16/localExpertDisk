@@ -875,10 +875,21 @@ fn history_compares_persisted_scans_and_duplicate_candidates_are_size_groups() {
     assert_eq!(comparison.removed_files_count, "0");
     assert_eq!(comparison.modified_files_count, "0");
     assert_eq!(comparison.moved_files_count, "0");
-    assert_eq!(comparison.added_files.len(), 1);
-    assert!(comparison.added_files[0].path.ends_with("third"));
-    assert!(comparison.removed_files.is_empty());
-    assert!(comparison.modified_files.is_empty());
+    let added = service
+        .comparison_files(&newer.id, &older.id, ScanComparisonKind::Added, None)
+        .unwrap();
+    assert_eq!(added.items.len(), 1);
+    assert!(added.items[0].path.ends_with("third"));
+    assert!(service
+        .comparison_files(&newer.id, &older.id, ScanComparisonKind::Removed, None)
+        .unwrap()
+        .items
+        .is_empty());
+    assert!(service
+        .comparison_files(&newer.id, &older.id, ScanComparisonKind::Modified, None)
+        .unwrap()
+        .items
+        .is_empty());
     let old_root = service.root(&older.id).unwrap();
     assert_eq!(
         service
@@ -934,6 +945,92 @@ fn history_retention_keeps_the_requested_latest_results_and_the_open_scan() {
     assert_eq!(remaining[0].id, latest.id);
     assert_eq!(remaining[1].id, protected.id);
     service.shutdown().unwrap();
+}
+
+#[test]
+fn comparison_change_lists_are_keyset_paginated_for_every_kind() {
+    let f = Fixture::new();
+    for index in 0..205 {
+        fs::write(f.root.join(format!("removed-{index:03}")), [1]).unwrap();
+        fs::write(f.root.join(format!("modified-{index:03}")), [2]).unwrap();
+    }
+    let service = f.service();
+    let run = || {
+        let (tx, rx) = mpsc::channel();
+        let scan = service
+            .start(f.request(), move |update| tx.send(update).is_ok())
+            .unwrap();
+        wait_terminal(&rx);
+        scan
+    };
+    let older = run();
+    for index in 0..205 {
+        fs::remove_file(f.root.join(format!("removed-{index:03}"))).unwrap();
+        fs::write(f.root.join(format!("modified-{index:03}")), [2, 3]).unwrap();
+        fs::write(f.root.join(format!("added-{index:03}")), [4]).unwrap();
+    }
+    let newer = run();
+
+    for kind in [
+        ScanComparisonKind::Added,
+        ScanComparisonKind::Removed,
+        ScanComparisonKind::Modified,
+    ] {
+        let first = service
+            .comparison_files(&newer.id, &older.id, kind, None)
+            .unwrap();
+        assert_eq!(first.items.len(), 100);
+        let second = service
+            .comparison_files(&newer.id, &older.id, kind, first.next_cursor.as_deref())
+            .unwrap();
+        assert_eq!(second.items.len(), 100);
+        let third = service
+            .comparison_files(&newer.id, &older.id, kind, second.next_cursor.as_deref())
+            .unwrap();
+        assert_eq!(third.items.len(), 5);
+        assert!(third.next_cursor.is_none());
+        let paths = first
+            .items
+            .into_iter()
+            .chain(second.items)
+            .chain(third.items)
+            .map(|item| item.path)
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(paths.len(), 205);
+    }
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn retention_policy_persists_and_runs_after_each_completed_scan() {
+    let f = Fixture::new();
+    fs::write(f.root.join("file"), [0]).unwrap();
+    let service = f.service();
+    assert_eq!(service.set_retention_policy(1).unwrap().keep_latest, 1);
+    let run = || {
+        let (tx, rx) = mpsc::channel();
+        let scan = service
+            .start(f.request(), move |update| tx.send(update).is_ok())
+            .unwrap();
+        wait_terminal(&rx);
+        scan
+    };
+    let first = run();
+    let second = run();
+    let history = service.history(None).unwrap();
+    assert_eq!(history.items.len(), 1);
+    assert_eq!(history.items[0].id, second.id);
+    assert_eq!(
+        service.get_scan(Some(&first.id)).unwrap_err().code,
+        ErrorCode::ScanNotFound
+    );
+    service.shutdown().unwrap();
+    drop(service);
+
+    let reopened = f.service();
+    assert_eq!(reopened.retention_policy().unwrap().keep_latest, 1);
+    assert_eq!(reopened.history(None).unwrap().items[0].id, second.id);
+    reopened.shutdown().unwrap();
 }
 
 #[test]
@@ -1080,7 +1177,7 @@ fn duplicate_confirmation_reuses_cache_and_excludes_disappeared_files() {
     let connection = Connection::open(&f.db).unwrap();
     let cached: i64 = connection
         .query_row(
-            "SELECT COUNT(*) FROM entries WHERE partial_fingerprint IS NOT NULL AND content_hash IS NOT NULL",
+            "SELECT COUNT(*) FROM entries WHERE partial_fingerprint IS NOT NULL AND content_hash IS NOT NULL AND hash_metadata_signature IS NOT NULL",
             [],
             |row| row.get(0),
         )
@@ -1094,7 +1191,110 @@ fn duplicate_confirmation_reuses_cache_and_excludes_disappeared_files() {
     let connection = Connection::open(&f.db).unwrap();
     let cleared: i64 = connection
         .query_row(
-            "SELECT COUNT(*) FROM entries WHERE name='copy-b' AND partial_fingerprint IS NULL AND content_hash IS NULL",
+            "SELECT COUNT(*) FROM entries WHERE name='copy-b' AND partial_fingerprint IS NULL AND content_hash IS NULL AND hash_metadata_signature IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(cleared, 1);
+    service.shutdown().unwrap();
+}
+
+#[test]
+fn duplicate_hashing_reports_progress_and_resumes_cached_work_after_restart() {
+    let f = Fixture::new();
+    for name in ["copy-a", "copy-b", "copy-c"] {
+        fs::write(f.root.join(name), b"identical-content").unwrap();
+    }
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    wait_terminal(&rx);
+
+    let worker = service.clone();
+    let (progress_tx, progress_rx) = mpsc::channel();
+    let (resume_tx, resume_rx) = mpsc::channel();
+    let hashing = std::thread::spawn(move || {
+        worker.confirm_duplicates_with_progress(|update| {
+            if update.phase == DuplicateHashPhase::Fingerprint && update.processed_files == "1" {
+                progress_tx.send(update).unwrap();
+                resume_rx.recv().unwrap();
+            }
+            true
+        })
+    });
+    let first_progress = progress_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert_eq!(first_progress.total_files, "3");
+    service.cancel_duplicate_hashing().unwrap();
+    resume_tx.send(()).unwrap();
+    let cancelled = hashing.join().unwrap().unwrap();
+    assert!(cancelled.cancelled);
+    let connection = Connection::open(&f.db).unwrap();
+    let cached: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM entries WHERE partial_fingerprint IS NOT NULL AND hash_metadata_signature IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(cached, 1);
+    drop(connection);
+    service.shutdown().unwrap();
+    drop(service);
+
+    let reopened = f.service();
+    let phases = Mutex::new(Vec::new());
+    let resumed = reopened
+        .confirm_duplicates_with_progress(|update| {
+            phases.lock().unwrap().push(update.phase);
+            true
+        })
+        .unwrap();
+    assert!(!resumed.cancelled);
+    assert_eq!(resumed.groups.items.len(), 1);
+    assert!(phases
+        .lock()
+        .unwrap()
+        .contains(&DuplicateHashPhase::Complete));
+    let connection = Connection::open(&f.db).unwrap();
+    let completed: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM entries WHERE content_hash IS NOT NULL AND hash_metadata_signature IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(completed, 3);
+    reopened.shutdown().unwrap();
+}
+
+#[test]
+fn duplicate_hashing_invalidates_cache_and_reports_changed_file_path() {
+    let f = Fixture::new();
+    let first = f.root.join("copy-a");
+    let second = f.root.join("copy-b");
+    fs::write(&first, b"same-content").unwrap();
+    fs::write(&second, b"same-content").unwrap();
+    let service = f.service();
+    let (tx, rx) = mpsc::channel();
+    service
+        .start(f.request(), move |update| tx.send(update).is_ok())
+        .unwrap();
+    wait_terminal(&rx);
+    assert_eq!(service.confirm_duplicates().unwrap().items.len(), 1);
+
+    fs::remove_file(&second).unwrap();
+    let result = service.confirm_duplicates_with_progress(|_| true).unwrap();
+    assert!(result.groups.items.is_empty());
+    assert_eq!(result.failures.len(), 1);
+    assert!(result.failures[0].path.ends_with("/input/copy-b"));
+    assert_eq!(result.failures[0].code, ErrorCode::EntryChanged);
+    let connection = Connection::open(&f.db).unwrap();
+    let cleared: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM entries WHERE name='copy-b' AND partial_fingerprint IS NULL AND content_hash IS NULL AND hash_metadata_signature IS NULL",
             [],
             |row| row.get(0),
         )

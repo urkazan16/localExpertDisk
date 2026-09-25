@@ -870,7 +870,11 @@ export function AnalyzerPanel({
 
   if (!scan || !isTerminalCandidate(scan)) return null;
   return (
-    <section className="panel analyzer" aria-labelledby="analysis-title">
+    <section
+      className="panel analyzer"
+      aria-labelledby="analysis-title"
+      data-analyzer-scan-id={scan.id}
+    >
       <div className="panel-heading">
         <h2 id="analysis-title">Результаты анализа</h2>
         <span className="stage">Данные локальной базы</span>

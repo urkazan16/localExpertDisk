@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { browser, $, $$, expect } from "@wdio/globals";
 
@@ -6,9 +6,11 @@ const root = process.env.LOCAL_EXPERT_DISK_E2E_ROOT;
 const database = process.env.LOCAL_EXPERT_DISK_E2E_DB;
 const trash = process.env.LOCAL_EXPERT_DISK_E2E_TRASH;
 const phase = process.env.LOCAL_EXPERT_DISK_E2E_PHASE;
+const thresholdsPath = process.env.LOCAL_EXPERT_DISK_PERFORMANCE_THRESHOLDS;
 
-if (!root || !database || !trash || !phase)
+if (!root || !database || !trash || !phase || !thresholdsPath)
   throw new Error("E2E fixture environment is not configured");
+const thresholds = JSON.parse(readFileSync(thresholdsPath, "utf8"));
 
 async function waitForButton(name) {
   const element = await $(`button=${name}`);
@@ -95,7 +97,18 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
 
       let rows = await historyRows();
       const oldest = rows.at(-1);
+      const oldestScanId = await oldest.getAttribute("data-scan-id");
+      const firstDisplayStarted = performance.now();
       await oldest.$("button=Открыть анализ").click();
+      const oldestAnalyzer = await $(
+        `.analyzer[data-analyzer-scan-id="${oldestScanId}"]`,
+      );
+      await oldestAnalyzer
+        .$('[aria-label^="Treemap каталога"]')
+        .waitForDisplayed();
+      expect(performance.now() - firstDisplayStarted).toBeLessThanOrEqual(
+        thresholds.max_first_display_ms,
+      );
       await expect(oldest).toHaveText(expect.stringContaining("Активный"));
 
       rows = await historyRows();

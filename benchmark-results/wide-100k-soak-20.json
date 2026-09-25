@@ -1,0 +1,93 @@
+{
+  "schema_version": 4,
+  "runner_version": "0.1.0",
+  "profile": "WIDE-100K-SOAK-20",
+  "environment": {
+    "os": "macos",
+    "architecture": "x86_64"
+  },
+  "root": "/private/var/folders/lh/nflnt1916gd3st38pcdm1m2m0000gn/T/local-expert-disk-soak-LvJLQA/fixture",
+  "started_at_ms": 1790369365527,
+  "fixture": {
+    "files": 100000,
+    "directories": 0,
+    "depth": 0,
+    "file_size": 0
+  },
+  "fixture_generation_ms": 18854,
+  "iterations": 20,
+  "scan_durations_ms": [
+    8837, 9421, 9303, 9395, 9431, 10052, 9563, 9239, 9352, 9488, 9736, 9408,
+    9213, 8004, 6615, 6713, 6731, 6823, 6722, 6762
+  ],
+  "processed_entries": "2000020",
+  "duration_ms": 170818,
+  "entries_per_second": 11708.454787263554,
+  "peak_rss_bytes": 19464192,
+  "batch_commits": 500,
+  "ipc_progress_events": 462,
+  "state": "completed",
+  "counts": {
+    "files": "100000",
+    "directories": "1",
+    "symlinks": "0",
+    "skipped": "0",
+    "errors": "0"
+  },
+  "sizes": {
+    "logical_bytes": "0",
+    "allocated_bytes": "0",
+    "unique_allocated_bytes": "0",
+    "sqlite_bytes": 882845872
+  },
+  "analyzer": {
+    "total_duration_ms": 305,
+    "root_duration_ms": 0,
+    "explorer_first_page_duration_ms": 0,
+    "categories_duration_ms": 26,
+    "first_content_duration_ms": 26,
+    "directory_map_duration_ms": 277,
+    "large_files_duration_ms": 0,
+    "explorer_items": 100,
+    "directory_map_nodes": 9,
+    "directory_map_remainder_objects": "99992",
+    "peak_rss_before_bytes": 17879040,
+    "peak_rss_after_bytes": 19464192
+  },
+  "regression": {
+    "passed": true,
+    "checks": [
+      {
+        "metric": "entries_per_second",
+        "actual": 11708.454787263554,
+        "limit": 3000.0,
+        "passed": true
+      },
+      {
+        "metric": "peak_rss_bytes",
+        "actual": 19464192.0,
+        "limit": 67108864.0,
+        "passed": true
+      },
+      {
+        "metric": "sqlite_bytes_per_entry",
+        "actual": 441.41852181478185,
+        "limit": 512.0,
+        "passed": true
+      },
+      {
+        "metric": "directory_map_duration_ms",
+        "actual": 277.0,
+        "limit": 3000.0,
+        "passed": true
+      },
+      {
+        "metric": "ipc_events_per_million_entries",
+        "actual": 230.99769002309978,
+        "limit": 512.0,
+        "passed": true
+      }
+    ],
+    "frontend_first_display_limit_ms": 2000
+  }
+}

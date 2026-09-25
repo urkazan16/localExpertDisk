@@ -5,7 +5,7 @@ use filesystem::{
     native::{FileSystemProvider, NativeFileSystem},
 };
 use fixture_generator::{generate, FixtureConfig};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use services::scans::{ScanInstrumentation, ScanService};
 use std::{
     error::Error,
@@ -24,6 +24,8 @@ struct Config {
     fault_target: Option<PathBuf>,
     fixture: Option<FixtureConfig>,
     controlled: bool,
+    iterations: u32,
+    thresholds: Option<PathBuf>,
 }
 
 #[derive(Serialize)]
@@ -46,10 +48,16 @@ struct Sizes {
 #[derive(Serialize)]
 struct Report {
     schema_version: u32,
+    runner_version: &'static str,
     profile: String,
+    environment: EnvironmentReport,
     root: String,
     started_at_ms: u128,
+    fixture: Option<FixtureReport>,
     fixture_generation_ms: Option<u128>,
+    iterations: u32,
+    scan_durations_ms: Vec<u128>,
+    processed_entries: String,
     duration_ms: u128,
     entries_per_second: f64,
     peak_rss_bytes: Option<u64>,
@@ -59,6 +67,32 @@ struct Report {
     counts: Counts,
     sizes: Sizes,
     analyzer: AnalyzerReport,
+    regression: Option<RegressionReport>,
+}
+
+#[derive(Serialize)]
+struct EnvironmentReport {
+    os: &'static str,
+    architecture: &'static str,
+}
+
+#[derive(Serialize)]
+struct FixtureReport {
+    files: u64,
+    directories: u32,
+    depth: u32,
+    file_size: u64,
+}
+
+impl From<FixtureConfig> for FixtureReport {
+    fn from(value: FixtureConfig) -> Self {
+        Self {
+            files: value.files,
+            directories: value.directories,
+            depth: value.depth,
+            file_size: value.file_size,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -66,6 +100,8 @@ struct AnalyzerReport {
     total_duration_ms: u128,
     root_duration_ms: u128,
     explorer_first_page_duration_ms: u128,
+    categories_duration_ms: u128,
+    first_content_duration_ms: u128,
     directory_map_duration_ms: u128,
     large_files_duration_ms: u128,
     explorer_items: usize,
@@ -73,6 +109,31 @@ struct AnalyzerReport {
     directory_map_remainder_objects: String,
     peak_rss_before_bytes: Option<u64>,
     peak_rss_after_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+struct Thresholds {
+    min_entries_per_second: f64,
+    max_peak_rss_bytes: u64,
+    max_sqlite_bytes_per_entry: f64,
+    max_directory_map_duration_ms: u128,
+    max_ipc_events_per_million_entries: f64,
+    max_first_display_ms: u128,
+}
+
+#[derive(Serialize)]
+struct RegressionCheck {
+    metric: &'static str,
+    actual: f64,
+    limit: f64,
+    passed: bool,
+}
+
+#[derive(Serialize)]
+struct RegressionReport {
+    passed: bool,
+    checks: Vec<RegressionCheck>,
+    frontend_first_display_limit_ms: u128,
 }
 
 fn parse_fault(value: &str) -> Result<FileSystemFault, Box<dyn Error>> {
@@ -100,6 +161,8 @@ fn parse_args(args: &[String]) -> Result<Config, Box<dyn Error>> {
     };
     let mut generate_fixture = false;
     let mut controlled = false;
+    let mut iterations = 1;
+    let mut thresholds = None;
     let mut index = 1;
     while index < args.len() {
         if args[index] == "--controlled" {
@@ -129,9 +192,14 @@ fn parse_args(args: &[String]) -> Result<Config, Box<dyn Error>> {
                 fixture.file_size = value.parse()?;
                 generate_fixture = true;
             }
+            "--iterations" => iterations = value.parse()?,
+            "--thresholds" => thresholds = Some(PathBuf::from(value)),
             option => return Err(format!("unknown option: {option}").into()),
         }
         index += 2;
+    }
+    if !(1..=100).contains(&iterations) {
+        return Err("--iterations must be between 1 and 100".into());
     }
     Ok(Config {
         root: PathBuf::from(root),
@@ -141,6 +209,8 @@ fn parse_args(args: &[String]) -> Result<Config, Box<dyn Error>> {
         fault_target,
         fixture: generate_fixture.then(|| fixture.validate()).transpose()?,
         controlled,
+        iterations,
+        thresholds,
     })
 }
 
@@ -221,13 +291,75 @@ fn map_nodes(node: &DirectoryMapNode) -> usize {
     1 + node.children.iter().map(map_nodes).sum::<usize>()
 }
 
+fn load_thresholds(path: Option<&Path>) -> Result<Option<Thresholds>, Box<dyn Error>> {
+    path.map(|path| Ok(serde_json::from_slice(&fs::read(path)?)?))
+        .transpose()
+}
+
+fn regression_report(
+    thresholds: Thresholds,
+    entries_per_second: f64,
+    peak_rss_bytes: Option<u64>,
+    sqlite_bytes: u64,
+    processed_entries: u64,
+    directory_map_duration_ms: u128,
+    ipc_progress_events: u64,
+) -> RegressionReport {
+    let denominator = processed_entries.max(1) as f64;
+    let values = [
+        RegressionCheck {
+            metric: "entries_per_second",
+            actual: entries_per_second,
+            limit: thresholds.min_entries_per_second,
+            passed: entries_per_second >= thresholds.min_entries_per_second,
+        },
+        RegressionCheck {
+            metric: "peak_rss_bytes",
+            actual: peak_rss_bytes.unwrap_or(u64::MAX) as f64,
+            limit: thresholds.max_peak_rss_bytes as f64,
+            passed: peak_rss_bytes.is_some_and(|value| value <= thresholds.max_peak_rss_bytes),
+        },
+        RegressionCheck {
+            metric: "sqlite_bytes_per_entry",
+            actual: sqlite_bytes as f64 / denominator,
+            limit: thresholds.max_sqlite_bytes_per_entry,
+            passed: sqlite_bytes as f64 / denominator <= thresholds.max_sqlite_bytes_per_entry,
+        },
+        RegressionCheck {
+            metric: "directory_map_duration_ms",
+            actual: directory_map_duration_ms as f64,
+            limit: thresholds.max_directory_map_duration_ms as f64,
+            passed: directory_map_duration_ms <= thresholds.max_directory_map_duration_ms,
+        },
+        RegressionCheck {
+            metric: "ipc_events_per_million_entries",
+            actual: ipc_progress_events as f64 * 1_000_000.0 / denominator,
+            limit: thresholds.max_ipc_events_per_million_entries,
+            passed: ipc_progress_events as f64 * 1_000_000.0 / denominator
+                <= thresholds.max_ipc_events_per_million_entries,
+        },
+    ];
+    let checks = Vec::from(values);
+    RegressionReport {
+        passed: checks.iter().all(|check| check.passed),
+        checks,
+        frontend_first_display_limit_ms: thresholds.max_first_display_ms,
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let mut config = parse_args(&std::env::args().skip(1).collect::<Vec<_>>()).map_err(|error| {
-        format!("{error}\nusage: scanner-benchmark ROOT --output FILE --profile NAME [--generate-files N --generate-directories N --generate-depth N --file-size N] [--controlled] [--fault FAULT] [--fault-target RELATIVE_PATH]")
+        format!("{error}\nusage: scanner-benchmark ROOT --output FILE --profile NAME [--generate-files N --generate-directories N --generate-depth N --file-size N] [--iterations N] [--thresholds FILE] [--controlled] [--fault FAULT] [--fault-target RELATIVE_PATH]")
     })?;
+    let thresholds = load_thresholds(config.thresholds.as_deref())?;
     let fixture_generation_ms = if let Some(fixture) = config.fixture {
-        if fixture.files >= 5_000_000 && !config.controlled {
-            return Err("5M fixtures require --controlled".into());
+        if fixture.files >= 5_000_000
+            && (!config.controlled
+                || std::env::var("LOCAL_EXPERT_DISK_CONTROLLED").as_deref() != Ok("1"))
+        {
+            return Err(
+                "5M fixtures require --controlled and LOCAL_EXPERT_DISK_CONTROLLED=1".into(),
+            );
         }
         let started = Instant::now();
         generate(&config.root, fixture)?;
@@ -243,15 +375,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (sender, receiver) = mpsc::channel();
     let started_at_ms = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     let started = Instant::now();
-    service.start_instrumented(
-        StartScanRequest {
-            root_path: config.root.to_string_lossy().into_owned(),
-        },
-        provider(&config),
-        Arc::clone(&instrumentation),
-        move |session| sender.send(session).is_ok(),
-    )?;
-    let session = terminal(&receiver)?;
+    let mut scan_durations_ms = Vec::with_capacity(config.iterations as usize);
+    let mut session = None;
+    let mut processed_entries = 0_u64;
+    for _ in 0..config.iterations {
+        let scan_started = Instant::now();
+        let updates = sender.clone();
+        service.start_instrumented(
+            StartScanRequest {
+                root_path: config.root.to_string_lossy().into_owned(),
+            },
+            provider(&config),
+            Arc::clone(&instrumentation),
+            move |session| updates.send(session).is_ok(),
+        )?;
+        let completed = terminal(&receiver)?;
+        processed_entries += completed.files_count.parse::<u64>()?
+            + completed.directories_count.parse::<u64>()?
+            + completed.symlinks_count.parse::<u64>()?;
+        scan_durations_ms.push(scan_started.elapsed().as_millis());
+        session = Some(completed);
+    }
+    let session = session.ok_or("benchmark did not execute a scan")?;
     let duration = started.elapsed();
     let analyzer_peak_before = peak_rss_bytes();
     let analyzer_started = Instant::now();
@@ -261,6 +406,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let explorer_started = Instant::now();
     let explorer = service.children(&session.id, &root.id, None)?;
     let explorer_first_page_duration_ms = explorer_started.elapsed().as_millis();
+    let categories_started = Instant::now();
+    let _categories = service.categories(&session.id)?;
+    let categories_duration_ms = categories_started.elapsed().as_millis();
+    let first_content_duration_ms =
+        root_duration_ms + explorer_first_page_duration_ms + categories_duration_ms;
     let map_started = Instant::now();
     let map = service.directory_map(&session.id, &root.id, DirectoryMapMetric::Logical, 3, 8)?;
     let directory_map_duration_ms = map_started.elapsed().as_millis();
@@ -271,6 +421,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         total_duration_ms: analyzer_started.elapsed().as_millis(),
         root_duration_ms,
         explorer_first_page_duration_ms,
+        categories_duration_ms,
+        first_content_duration_ms,
         directory_map_duration_ms,
         large_files_duration_ms,
         explorer_items: explorer.items.len(),
@@ -285,18 +437,39 @@ fn main() -> Result<(), Box<dyn Error>> {
         peak_rss_after_bytes: peak_rss_bytes(),
     };
     service.shutdown()?;
-    let entries = session.files_count.parse::<u64>()?
-        + session.directories_count.parse::<u64>()?
-        + session.symlinks_count.parse::<u64>()?;
+    let sqlite_bytes = database_size(&database);
+    let peak_rss = peak_rss_bytes();
+    let entries_per_second = processed_entries as f64 / duration.as_secs_f64().max(f64::EPSILON);
+    let regression = thresholds.map(|thresholds| {
+        regression_report(
+            thresholds,
+            entries_per_second,
+            peak_rss,
+            sqlite_bytes,
+            processed_entries,
+            directory_map_duration_ms,
+            instrumentation.progress_events(),
+        )
+    });
+    let gate_passed = regression.as_ref().is_none_or(|report| report.passed);
     let report = Report {
-        schema_version: 2,
+        schema_version: 4,
+        runner_version: env!("CARGO_PKG_VERSION"),
         profile: config.profile,
+        environment: EnvironmentReport {
+            os: std::env::consts::OS,
+            architecture: std::env::consts::ARCH,
+        },
         root: config.root.to_string_lossy().into_owned(),
         started_at_ms,
+        fixture: config.fixture.map(Into::into),
         fixture_generation_ms,
+        iterations: config.iterations,
+        scan_durations_ms,
+        processed_entries: processed_entries.to_string(),
         duration_ms: duration.as_millis(),
-        entries_per_second: entries as f64 / duration.as_secs_f64().max(f64::EPSILON),
-        peak_rss_bytes: peak_rss_bytes(),
+        entries_per_second,
+        peak_rss_bytes: peak_rss,
         batch_commits: instrumentation.batch_commits(),
         ipc_progress_events: instrumentation.progress_events(),
         state: state_name(&session)?,
@@ -311,14 +484,68 @@ fn main() -> Result<(), Box<dyn Error>> {
             logical_bytes: session.logical_size,
             allocated_bytes: session.allocated_size,
             unique_allocated_bytes: session.unique_allocated_size,
-            sqlite_bytes: database_size(&database),
+            sqlite_bytes,
         },
         analyzer,
+        regression,
     };
     if let Some(parent) = config.output.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::write(&config.output, serde_json::to_vec_pretty(&report)?)?;
     println!("{}", serde_json::to_string(&report)?);
+    if !gate_passed {
+        return Err("performance regression thresholds failed".into());
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn regression_thresholds_cover_all_scanner_gate_metrics() {
+        let report = regression_report(
+            Thresholds {
+                min_entries_per_second: 3_000.0,
+                max_peak_rss_bytes: 64 * 1024 * 1024,
+                max_sqlite_bytes_per_entry: 512.0,
+                max_directory_map_duration_ms: 3_000,
+                max_ipc_events_per_million_entries: 512.0,
+                max_first_display_ms: 2_000,
+            },
+            3_500.0,
+            Some(32 * 1024 * 1024),
+            400_000_000,
+            1_000_000,
+            50,
+            200,
+        );
+        assert!(report.passed);
+        assert_eq!(report.checks.len(), 5);
+        assert_eq!(report.frontend_first_display_limit_ms, 2_000);
+    }
+
+    #[test]
+    fn regression_failure_is_reported_without_hiding_other_checks() {
+        let report = regression_report(
+            Thresholds {
+                min_entries_per_second: 4_000.0,
+                max_peak_rss_bytes: 1,
+                max_sqlite_bytes_per_entry: 1.0,
+                max_directory_map_duration_ms: 1,
+                max_ipc_events_per_million_entries: 1.0,
+                max_first_display_ms: 1,
+            },
+            10.0,
+            None,
+            10,
+            1,
+            10,
+            10,
+        );
+        assert!(!report.passed);
+        assert!(report.checks.iter().all(|check| !check.passed));
+    }
 }

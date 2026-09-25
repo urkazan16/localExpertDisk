@@ -345,10 +345,6 @@ pub struct ScanComparison {
     pub removed_files_count: String,
     pub modified_files_count: String,
     pub moved_files_count: String,
-    pub added_files: Vec<ScanComparisonFile>,
-    pub removed_files: Vec<ScanComparisonFile>,
-    pub modified_files: Vec<ScanComparisonFile>,
-    pub details_limit: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -356,6 +352,25 @@ pub struct ScanComparisonFile {
     pub path: String,
     pub logical_size: String,
     pub previous_logical_size: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanComparisonKind {
+    Added,
+    Removed,
+    Modified,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct ScanComparisonFilePage {
+    pub items: Vec<ScanComparisonFile>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct RetentionPolicy {
+    pub keep_latest: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -376,6 +391,37 @@ pub struct DuplicateGroupPage {
     pub scan_id: Option<String>,
     pub items: Vec<DuplicateGroup>,
     pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DuplicateHashPhase {
+    Fingerprint,
+    Sha256,
+    Complete,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct DuplicateHashProgress {
+    pub scan_id: String,
+    pub phase: DuplicateHashPhase,
+    pub processed_files: String,
+    pub total_files: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct DuplicateHashFailure {
+    pub entry_id: String,
+    pub path: String,
+    pub code: ErrorCode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct DuplicateHashResult {
+    pub groups: DuplicateGroupPage,
+    pub failures: Vec<DuplicateHashFailure>,
+    pub cancelled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

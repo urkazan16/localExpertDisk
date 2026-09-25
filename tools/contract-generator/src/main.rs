@@ -1,9 +1,11 @@
 use domain::{
     AppError, AppInfo, BatchOperationResult, Capabilities, CategorySummary, DirectoryMap,
     DirectoryMapMetric, DirectoryMapNode, DirectoryMapRemainder, DuplicateDeleteFailure,
-    DuplicateDeleteResult, DuplicateFilePage, DuplicateGroup, DuplicateGroupPage, EntryPage,
-    ErrorCode, FileCategory, FileSort, HistoryCleanupResult, IndexedEntry, IndexedEntryKind,
-    OldFile, OldFileCriterion, OldFilePage, Platform, ScanComparison, ScanComparisonFile,
+    DuplicateDeleteResult, DuplicateFilePage, DuplicateGroup, DuplicateGroupPage,
+    DuplicateHashFailure, DuplicateHashPhase, DuplicateHashProgress, DuplicateHashResult,
+    EntryPage, ErrorCode, FileCategory, FileSort, HistoryCleanupResult, IndexedEntry,
+    IndexedEntryKind, OldFile, OldFileCriterion, OldFilePage, Platform, RetentionPolicy,
+    ScanComparison, ScanComparisonFile, ScanComparisonFilePage, ScanComparisonKind,
     ScanHistoryPage, ScanIssue, ScanIssuePage, ScanSession, ScanState, SnapshotInfo,
     StartScanRequest, VolumeInfo,
 };
@@ -45,10 +47,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         OldFilePage::decl(&config),
         ScanHistoryPage::decl(&config),
         ScanComparisonFile::decl(&config),
+        ScanComparisonKind::decl(&config),
+        ScanComparisonFilePage::decl(&config),
         ScanComparison::decl(&config),
         HistoryCleanupResult::decl(&config),
+        RetentionPolicy::decl(&config),
         DuplicateGroup::decl(&config),
         DuplicateGroupPage::decl(&config),
+        DuplicateHashPhase::decl(&config),
+        DuplicateHashProgress::decl(&config),
+        DuplicateHashFailure::decl(&config),
+        DuplicateHashResult::decl(&config),
         DuplicateFilePage::decl(&config),
         DuplicateDeleteFailure::decl(&config),
         DuplicateDeleteResult::decl(&config),
@@ -125,6 +134,15 @@ export function getScanHistory(afterId: string | null = null): Promise<ScanHisto
 export function compareScans(newerScanId: string, olderScanId: string): Promise<ScanComparison> {
   return invoke<ScanComparison>('compare_scans', { newerScanId, olderScanId });
 }
+export function getScanComparisonFiles(newerScanId: string, olderScanId: string, kind: ScanComparisonKind, afterId: string | null = null): Promise<ScanComparisonFilePage> {
+  return invoke<ScanComparisonFilePage>('get_scan_comparison_files', { newerScanId, olderScanId, kind, afterId });
+}
+export function getRetentionPolicy(): Promise<RetentionPolicy> {
+  return invoke<RetentionPolicy>('get_retention_policy');
+}
+export function setRetentionPolicy(keepLatest: number): Promise<RetentionPolicy> {
+  return invoke<RetentionPolicy>('set_retention_policy', { keepLatest });
+}
 export function deleteScanHistory(scanId: string): Promise<void> {
   return invoke<void>('delete_scan_history', { scanId });
 }
@@ -134,8 +152,13 @@ export function cleanupScanHistory(keepLatest: number, protectedScanId: string |
 export function getDuplicateCandidates(afterSize: string | null = null): Promise<DuplicateGroupPage> {
   return invoke<DuplicateGroupPage>('get_duplicate_candidates', { afterSize });
 }
-export function confirmDuplicates(): Promise<DuplicateGroupPage> {
-  return invoke<DuplicateGroupPage>('confirm_duplicates');
+export function confirmDuplicates(onProgress: (update: DuplicateHashProgress) => void): Promise<DuplicateHashResult> {
+  const channel = new Channel<DuplicateHashProgress>();
+  channel.onmessage = onProgress;
+  return invoke<DuplicateHashResult>('confirm_duplicates', { onProgress: channel });
+}
+export function cancelDuplicateHashing(): Promise<void> {
+  return invoke<void>('cancel_duplicate_hashing');
 }
 export function getConfirmedDuplicates(afterId: string | null = null): Promise<DuplicateGroupPage> {
   return invoke<DuplicateGroupPage>('get_confirmed_duplicates', { afterId });

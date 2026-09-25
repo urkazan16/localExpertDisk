@@ -1,6 +1,6 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const runtime = mkdtempSync(join(tmpdir(), "local-expert-disk-e2e-"));
@@ -43,6 +43,9 @@ try {
       LOCAL_EXPERT_DISK_E2E_ROOT: root,
       LOCAL_EXPERT_DISK_E2E_DB: join(state, "index.db"),
       LOCAL_EXPERT_DISK_E2E_TRASH: trash,
+      LOCAL_EXPERT_DISK_PERFORMANCE_THRESHOLDS: resolve(
+        "benchmark-results/thresholds.json",
+      ),
     };
     for (const phase of ["scan", "restart"]) {
       const status = run(

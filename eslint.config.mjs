@@ -12,6 +12,7 @@ export default tseslint.config(
         Buffer: "readonly",
         describe: "readonly",
         it: "readonly",
+        performance: "readonly",
         process: "readonly",
       },
     },
