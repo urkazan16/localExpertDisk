@@ -267,6 +267,7 @@ mod tests {
             modified_at_ms: None,
             accessed_at_ms: None,
             identity: Some("root".into()),
+            link_count: None,
         };
         let file_metadata = EntryMetadata {
             kind: EntryKind::File,
@@ -276,6 +277,7 @@ mod tests {
             modified_at_ms: None,
             accessed_at_ms: None,
             identity: Some("file".into()),
+            link_count: Some(1),
         };
         let mut storage = SqliteStorage::open(&database).unwrap();
         let scan = storage.create_scan(&root).unwrap();

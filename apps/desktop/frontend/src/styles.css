@@ -273,6 +273,12 @@ progress {
   gap: 12px;
   justify-content: space-between;
 }
+.history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
 .entry-list {
   list-style: none;
   margin: 14px 0;
@@ -281,7 +287,8 @@ progress {
   padding: 0;
   border-top: 1px solid #e1e6d9;
 }
-.entry-list li {
+.entry-list li,
+.entry-list [role="listitem"] {
   align-items: center;
   border-bottom: 1px solid #e1e6d9;
   display: grid;
@@ -298,12 +305,89 @@ progress {
   color: #657060;
   font-size: 12px;
 }
-.entry-list li > span {
+.entry-list li > span,
+.entry-list [role="listitem"] > span {
   font-size: 13px;
   text-align: right;
 }
 .entry-list button {
   padding: 6px 10px;
+}
+.virtual-entry-list {
+  height: 430px;
+  max-height: none;
+  position: relative;
+}
+.virtual-entry-spacer {
+  position: relative;
+}
+.virtual-entry-row {
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+.navigation-actions,
+.breadcrumbs ol {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.breadcrumbs {
+  margin: -6px 0 16px;
+}
+.breadcrumbs ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.breadcrumbs li:not(:last-child)::after {
+  color: #7b8877;
+  content: "/";
+  margin-left: 8px;
+}
+button.breadcrumb {
+  background: transparent;
+  border: 0;
+  color: #365b3b;
+  padding: 3px;
+}
+button.breadcrumb:disabled {
+  color: #21352c;
+  opacity: 1;
+}
+.disk-overview-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.treemap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 18px;
+  min-height: 180px;
+}
+.treemap-item {
+  display: flex;
+  min-width: 120px;
+}
+button.treemap-tile {
+  align-items: flex-start;
+  background: #dfe8d7;
+  border: 1px solid #b9c9ad;
+  color: #28452c;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 86px;
+  text-align: left;
+  width: 100%;
+}
+button.treemap-tile:hover {
+  background: #cfdec4;
+}
+.treemap-tile span {
+  font-size: 12px;
 }
 
 .folder-sort,
@@ -385,11 +469,15 @@ progress {
   .scan-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .entry-list li {
+  .entry-list li,
+  .entry-list [role="listitem"] {
     align-items: start;
     grid-template-columns: minmax(0, 1fr) auto;
   }
   .entry-list button {
     grid-column: 1 / -1;
+  }
+  .disk-overview-metrics {
+    grid-template-columns: 1fr;
   }
 }

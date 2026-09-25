@@ -136,7 +136,10 @@ export function App() {
           trash={state.status === "ready" && state.info.capabilities.trash}
         />
         <OldFilesPanel enabled={state.status === "ready"} scan={scan} />
-        <HistoryDuplicatesPanel enabled={state.status === "ready"} />
+        <HistoryDuplicatesPanel
+          enabled={state.status === "ready"}
+          onOpenScan={setScan}
+        />
       </main>
       <footer>
         macOS · Windows · Linux <span>Локально. Без облачного хранилища.</span>

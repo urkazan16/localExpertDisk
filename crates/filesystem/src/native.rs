@@ -30,6 +30,8 @@ pub struct EntryMetadata {
     pub modified_at_ms: Option<i64>,
     pub accessed_at_ms: Option<i64>,
     pub identity: Option<String>,
+    /// Number of directory entries sharing the same inode, when the platform exposes it.
+    pub link_count: Option<u64>,
 }
 pub type DirectoryEntries = Box<dyn Iterator<Item = io::Result<PathBuf>> + Send>;
 pub trait FileSystemProvider: Send + Sync {
@@ -63,6 +65,13 @@ impl FileSystemProvider for NativeFileSystem {
         #[cfg(not(unix))]
         let identity = None;
         #[cfg(unix)]
+        let link_count = {
+            use std::os::unix::fs::MetadataExt;
+            (kind == EntryKind::File).then(|| metadata.nlink())
+        };
+        #[cfg(not(unix))]
+        let link_count = None;
+        #[cfg(unix)]
         let allocated_size = {
             use std::os::unix::fs::MetadataExt;
             (kind == EntryKind::File).then(|| metadata.blocks().saturating_mul(512))
@@ -81,6 +90,7 @@ impl FileSystemProvider for NativeFileSystem {
             modified_at_ms: metadata.modified().ok().and_then(timestamp_ms),
             accessed_at_ms: metadata.accessed().ok().and_then(timestamp_ms),
             identity,
+            link_count,
         })
     }
     fn read_directory(&self, path: &Path) -> io::Result<DirectoryEntries> {

@@ -8,7 +8,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-pub const BATCH_SIZE: usize = 256;
+pub const BATCH_SIZE: usize = 4_096;
 pub mod fault;
 #[derive(Debug)]
 pub struct DirectoryTask {
@@ -230,6 +230,7 @@ mod tests {
                 modified_at_ms: None,
                 accessed_at_ms: None,
                 identity: None,
+                link_count: None,
             })
         }
         fn read_directory(&self, _: &Path) -> io::Result<DirectoryEntries> {
@@ -402,6 +403,7 @@ mod tests {
                 modified_at_ms: None,
                 accessed_at_ms: None,
                 identity: None,
+                link_count: None,
             })
         }
         fn read_directory(&self, _: &Path) -> io::Result<DirectoryEntries> {
@@ -446,6 +448,7 @@ mod tests {
                 modified_at_ms: None,
                 accessed_at_ms: None,
                 identity: None,
+                link_count: None,
             })
         }
 

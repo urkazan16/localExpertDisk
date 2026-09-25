@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AnalyzerPanel } from "./AnalyzerPanel";
 import {
@@ -118,7 +124,88 @@ describe("Analyzer UI", () => {
     fireEvent.change(screen.getByLabelText("Сортировка содержимого каталога"), {
       target: { value: "name_asc" },
     });
-    expect(screen.getAllByRole("listitem")[0]).toHaveTextContent("Арбуз");
+    expect(
+      within(
+        screen.getByRole("list", { name: "Содержимое каталога" }),
+      ).getAllByRole("listitem")[0],
+    ).toHaveTextContent("Арбуз");
+  });
+
+  it("virtualizes long entry pages and renders the scrolled window", async () => {
+    vi.mocked(getChildren).mockResolvedValue({
+      items: Array.from({ length: 100 }, (_, index) => ({
+        id: String(100 + index),
+        parent_id: "8",
+        name: `file-${String(index).padStart(3, "0")}`,
+        path: `/fixture/file-${index}`,
+        kind: "file" as const,
+        logical_size: "1",
+        aggregate_size: "1",
+      })),
+      next_cursor: null,
+    });
+    render(<AnalyzerPanel enabled scan={scan} />);
+    await screen.findByText("file-000");
+    expect(screen.queryByText("file-099")).not.toBeInTheDocument();
+    const list = screen.getByRole("list", { name: "Содержимое каталога" });
+    fireEvent.scroll(list, { target: { scrollTop: 92 * 99 } });
+    expect(await screen.findByText("file-099")).toBeInTheDocument();
+    expect(within(list).getAllByRole("listitem").length).toBeLessThan(100);
+  });
+
+  it("supports breadcrumbs and backward and forward folder navigation", async () => {
+    const nested = {
+      id: "9",
+      parent_id: "8",
+      name: "nested",
+      path: "/fixture/nested",
+      kind: "directory" as const,
+      logical_size: "0",
+      aggregate_size: "20",
+    };
+    vi.mocked(getChildren).mockImplementation(async (_scan, directory) => ({
+      items: directory === "8" ? [nested] : [],
+      next_cursor: null,
+    }));
+    render(<AnalyzerPanel enabled scan={scan} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Открыть" }));
+    await screen.findByRole("button", { name: "nested" });
+    fireEvent.click(screen.getByRole("button", { name: "Назад" }));
+    await waitFor(() =>
+      expect(getChildren).toHaveBeenLastCalledWith("7", "8", null),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Вперёд" }));
+    await waitFor(() =>
+      expect(getChildren).toHaveBeenLastCalledWith("7", "9", null),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "fixture" }));
+    await waitFor(() =>
+      expect(getChildren).toHaveBeenLastCalledWith("7", "8", null),
+    );
+  });
+
+  it("renders a disk overview and opens a category from the treemap", async () => {
+    vi.mocked(getCategories).mockResolvedValue([
+      { category: "images", files_count: "2", logical_size: "12" },
+      { category: "documents", files_count: "1", logical_size: "10" },
+    ]);
+    vi.mocked(getFilesInCategory).mockResolvedValue({
+      items: [],
+      next_cursor: null,
+    });
+    render(<AnalyzerPanel enabled scan={scan} />);
+    expect(await screen.findByText("Обзор диска")).toBeInTheDocument();
+    expect(
+      screen.getByRole("list", { name: "Карта занятого места" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Показать категорию Изображения",
+      }),
+    );
+    await waitFor(() =>
+      expect(getFilesInCategory).toHaveBeenCalledWith("7", "images", null),
+    );
   });
 
   it("loads the next category page using its cursor", async () => {

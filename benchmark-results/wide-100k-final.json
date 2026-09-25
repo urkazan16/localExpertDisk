@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "profile": "WIDE-100K-FINAL",
+  "root": "/private/tmp/local-expert-disk-gate.XI20kp/wide-100k",
+  "started_at_ms": 1790327621695,
+  "fixture_generation_ms": null,
+  "duration_ms": 8229,
+  "entries_per_second": 12151.018953092802,
+  "peak_rss_bytes": 8687616,
+  "batch_commits": 25,
+  "ipc_progress_events": 23,
+  "state": "completed",
+  "counts": {
+    "files": "100000",
+    "directories": "1",
+    "symlinks": "0",
+    "skipped": "0",
+    "errors": "0"
+  },
+  "sizes": {
+    "logical_bytes": "0",
+    "allocated_bytes": "0",
+    "unique_allocated_bytes": "0",
+    "sqlite_bytes": 44219128
+  }
+}

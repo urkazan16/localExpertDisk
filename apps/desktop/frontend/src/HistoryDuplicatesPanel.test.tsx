@@ -5,6 +5,7 @@ import {
   confirmDuplicates,
   getConfirmedDuplicates,
   getScanHistory,
+  type ScanSession,
 } from "./api/generated";
 
 vi.mock("./api/generated", () => ({
@@ -52,5 +53,34 @@ describe("History and duplicates UI", () => {
     );
     expect(confirmDuplicates).toHaveBeenCalledTimes(1);
     expect(await screen.findByText(/3 файлов/)).toBeInTheDocument();
+  });
+
+  it("opens a readable historical scan in the analyzer", async () => {
+    const historical: ScanSession = {
+      id: "41",
+      root_path: "/archive",
+      state: "completed",
+      files_count: "10",
+      directories_count: "2",
+      symlinks_count: "0",
+      skipped_count: "0",
+      logical_size: "100",
+      allocated_size: "4096",
+      unique_allocated_size: "4096",
+      errors_count: "0",
+      started_at_ms: "1",
+      finished_at_ms: "2",
+      failure: null,
+    };
+    vi.mocked(getScanHistory).mockResolvedValue({
+      items: [historical],
+      next_cursor: null,
+    });
+    const onOpenScan = vi.fn();
+    render(<HistoryDuplicatesPanel enabled onOpenScan={onOpenScan} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Открыть анализ" }),
+    );
+    expect(onOpenScan).toHaveBeenCalledWith(historical);
   });
 });

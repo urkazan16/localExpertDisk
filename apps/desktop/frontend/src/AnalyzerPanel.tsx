@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import {
   getChildren,
   getCategories,
@@ -40,6 +46,10 @@ const categoryLabels = {
   other: "Другое",
 } as const;
 type FolderSort = "size_desc" | "name_asc";
+const VIRTUAL_LIST_THRESHOLD = 40;
+const VIRTUAL_ROW_HEIGHT = 92;
+const VIRTUAL_VIEWPORT_HEIGHT = 430;
+const VIRTUAL_OVERSCAN = 4;
 
 function sortFolderItems(items: IndexedEntry[], sort: FolderSort) {
   return [...items].sort((left, right) => {
@@ -54,6 +64,65 @@ function sortFolderItems(items: IndexedEntry[], sort: FolderSort) {
           : 0;
     return sizeOrder || left.name.localeCompare(right.name, "ru");
   });
+}
+
+function EntryRowContent({
+  entry,
+  onDirectory,
+  onAction,
+  onTrash,
+  selected,
+  onToggle,
+}: {
+  entry: IndexedEntry;
+  onDirectory?: (entry: IndexedEntry) => void;
+  onAction?: (entry: IndexedEntry, action: "open" | "reveal") => void;
+  onTrash?: (entry: IndexedEntry) => void;
+  selected?: Set<string>;
+  onToggle?: (entry: IndexedEntry) => void;
+}) {
+  return (
+    <>
+      {onToggle && entry.kind !== "symlink" && entry.kind !== "other" && (
+        <input
+          aria-label={`Выбрать ${entry.name || entry.path}`}
+          type="checkbox"
+          checked={selected?.has(entry.id) ?? false}
+          onChange={() => onToggle(entry)}
+        />
+      )}
+      <div>
+        <strong>{entry.name || entry.path}</strong>
+        <span>{kindLabels[entry.kind]}</span>
+      </div>
+      <span title={`${entry.aggregate_size} байт`}>
+        {formatBytes(entry.aggregate_size)}
+      </span>
+      {entry.kind === "directory" && onDirectory && (
+        <button className="secondary" onClick={() => onDirectory(entry)}>
+          Открыть
+        </button>
+      )}
+      {onAction && (
+        <div className="entry-actions">
+          <button className="secondary" onClick={() => onAction(entry, "open")}>
+            Открыть в системе
+          </button>
+          <button
+            className="secondary"
+            onClick={() => onAction(entry, "reveal")}
+          >
+            Показать в системе
+          </button>
+        </div>
+      )}
+      {onTrash && entry.kind !== "symlink" && entry.kind !== "other" && (
+        <button className="secondary danger" onClick={() => onTrash(entry)}>
+          В корзину
+        </button>
+      )}
+    </>
+  );
 }
 
 function EntryRows({
@@ -71,55 +140,146 @@ function EntryRows({
   selected?: Set<string>;
   onToggle?: (entry: IndexedEntry) => void;
 }) {
+  const [scrollTop, setScrollTop] = useState(0);
+  useEffect(() => setScrollTop(0), [items]);
   if (items.length === 0) return <p className="hint">Нет объектов.</p>;
+  const row = (entry: IndexedEntry): ReactNode => (
+    <EntryRowContent
+      entry={entry}
+      onDirectory={onDirectory}
+      onAction={onAction}
+      onTrash={onTrash}
+      selected={selected}
+      onToggle={onToggle}
+    />
+  );
+  if (items.length >= VIRTUAL_LIST_THRESHOLD) {
+    const start = Math.max(
+      0,
+      Math.floor(scrollTop / VIRTUAL_ROW_HEIGHT) - VIRTUAL_OVERSCAN,
+    );
+    const visibleCount =
+      Math.ceil(VIRTUAL_VIEWPORT_HEIGHT / VIRTUAL_ROW_HEIGHT) +
+      VIRTUAL_OVERSCAN * 2;
+    const end = Math.min(items.length, start + visibleCount);
+    return (
+      <div
+        className="entry-list virtual-entry-list"
+        role="list"
+        aria-label="Содержимое каталога"
+        tabIndex={0}
+        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+      >
+        <div
+          className="virtual-entry-spacer"
+          style={{ height: items.length * VIRTUAL_ROW_HEIGHT }}
+        >
+          {items.slice(start, end).map((entry, offset) => (
+            <div
+              className="virtual-entry-row"
+              role="listitem"
+              key={entry.id}
+              style={{
+                height: VIRTUAL_ROW_HEIGHT,
+                transform: `translateY(${(start + offset) * VIRTUAL_ROW_HEIGHT}px)`,
+              }}
+            >
+              {row(entry)}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
   return (
     <ul className="entry-list" aria-label="Содержимое каталога">
       {items.map((entry) => (
-        <li key={entry.id}>
-          {onToggle && entry.kind !== "symlink" && entry.kind !== "other" && (
-            <input
-              aria-label={`Выбрать ${entry.name || entry.path}`}
-              type="checkbox"
-              checked={selected?.has(entry.id) ?? false}
-              onChange={() => onToggle(entry)}
-            />
-          )}
-          <div>
-            <strong>{entry.name || entry.path}</strong>
-            <span>{kindLabels[entry.kind]}</span>
-          </div>
-          <span title={`${entry.aggregate_size} байт`}>
-            {formatBytes(entry.aggregate_size)}
-          </span>
-          {entry.kind === "directory" && onDirectory && (
-            <button className="secondary" onClick={() => onDirectory(entry)}>
-              Открыть
-            </button>
-          )}
-          {onAction && (
-            <div className="entry-actions">
-              <button
-                className="secondary"
-                onClick={() => onAction(entry, "open")}
-              >
-                Открыть в системе
-              </button>
-              <button
-                className="secondary"
-                onClick={() => onAction(entry, "reveal")}
-              >
-                Показать в системе
-              </button>
-            </div>
-          )}
-          {onTrash && entry.kind !== "symlink" && entry.kind !== "other" && (
-            <button className="secondary danger" onClick={() => onTrash(entry)}>
-              В корзину
-            </button>
-          )}
-        </li>
+        <li key={entry.id}>{row(entry)}</li>
       ))}
     </ul>
+  );
+}
+
+function DiskOverview({
+  scan,
+  categories,
+  onCategory,
+}: {
+  scan: ScanSession;
+  categories: CategorySummary[];
+  onCategory: (category: FileCategory) => void;
+}) {
+  const total = categories.reduce(
+    (sum, category) => sum + BigInt(category.logical_size),
+    0n,
+  );
+  return (
+    <section className="analysis-block" aria-labelledby="overview-title">
+      <div className="panel-heading">
+        <div>
+          <h3 id="overview-title">Обзор диска</h3>
+          <p className="hint">
+            Распределение логического размера по категориям.
+          </p>
+        </div>
+        <strong>{formatBytes(scan.logical_size)}</strong>
+      </div>
+      <dl className="disk-overview-metrics">
+        <div>
+          <dt>Логический размер</dt>
+          <dd>{formatBytes(scan.logical_size)}</dd>
+        </div>
+        {scan.allocated_size !== null && (
+          <div>
+            <dt>На диске</dt>
+            <dd>{formatBytes(scan.allocated_size)}</dd>
+          </div>
+        )}
+        {scan.unique_allocated_size !== null && (
+          <div>
+            <dt>Уникально на диске</dt>
+            <dd>{formatBytes(scan.unique_allocated_size)}</dd>
+          </div>
+        )}
+      </dl>
+      {categories.length === 0 ? (
+        <p className="hint">Нет файлов для построения карты.</p>
+      ) : (
+        <div className="treemap" role="list" aria-label="Карта занятого места">
+          {categories.map((category) => {
+            const size = BigInt(category.logical_size);
+            const percent =
+              total === 0n ? 0 : Number((size * 1_000n) / total) / 10;
+            return (
+              <div
+                className="treemap-item"
+                key={category.category}
+                role="listitem"
+                style={{
+                  flexGrow: Math.max(percent, 1),
+                  flexBasis: `${Math.max(percent, 12)}%`,
+                }}
+              >
+                <button
+                  className="treemap-tile"
+                  aria-label={`Показать категорию ${categoryLabels[category.category]}`}
+                  onClick={() => onCategory(category.category)}
+                >
+                  <strong>{categoryLabels[category.category]}</strong>
+                  <span>{formatBytes(category.logical_size)}</span>
+                  <span>
+                    {percent.toLocaleString("ru-RU", {
+                      maximumFractionDigits: 1,
+                    })}
+                    %
+                  </span>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -134,7 +294,8 @@ export function AnalyzerPanel({
 }) {
   const [root, setRoot] = useState<IndexedEntry | null>(null);
   const [directory, setDirectory] = useState<IndexedEntry | null>(null);
-  const [trail, setTrail] = useState<IndexedEntry[]>([]);
+  const [navigation, setNavigation] = useState<IndexedEntry[]>([]);
+  const [navigationIndex, setNavigationIndex] = useState(-1);
   const [children, setChildren] = useState<EntryPage | null>(null);
   const [categories, setCategories] = useState<CategorySummary[] | null>(null);
   const [categoryFiles, setCategoryFiles] = useState<EntryPage | null>(null);
@@ -159,7 +320,8 @@ export function AnalyzerPanel({
     const current = ++version.current;
     setRoot(null);
     setDirectory(null);
-    setTrail([]);
+    setNavigation([]);
+    setNavigationIndex(-1);
     setChildren(null);
     setCategories(null);
     setCategoryFiles(null);
@@ -180,6 +342,8 @@ export function AnalyzerPanel({
         if (current === version.current) {
           setRoot(entry);
           setDirectory(entry);
+          setNavigation([entry]);
+          setNavigationIndex(0);
           setChildren(page);
           setCategories(categoryItems);
         }
@@ -195,8 +359,8 @@ export function AnalyzerPanel({
   async function showDirectory(
     entry: IndexedEntry,
     after: string | null = null,
-  ) {
-    if (!scan) return;
+  ): Promise<boolean> {
+    if (!scan) return false;
     const current = version.current;
     setLoading(true);
     setError(null);
@@ -205,12 +369,27 @@ export function AnalyzerPanel({
       if (current === version.current) {
         setDirectory(entry);
         setChildren(page);
+        if (after === null) setSelected([]);
+        return true;
       }
     } catch (reason: unknown) {
       if (current === version.current) setError(errorMessage(reason));
     } finally {
       if (current === version.current) setLoading(false);
     }
+    return false;
+  }
+
+  async function openDirectory(entry: IndexedEntry) {
+    if (!(await showDirectory(entry))) return;
+    setNavigation((items) => [...items.slice(0, navigationIndex + 1), entry]);
+    setNavigationIndex((index) => index + 1);
+  }
+
+  async function moveInNavigation(index: number) {
+    const target = navigation[index];
+    if (!target || !(await showDirectory(target))) return;
+    setNavigationIndex(index);
   }
 
   async function showLargeFiles(after: string | null = null) {
@@ -364,19 +543,43 @@ export function AnalyzerPanel({
                 <h3 id="explorer-title">Проводник папок</h3>
                 <p className="scan-path">{directory.path}</p>
               </div>
-              {trail.length > 0 && (
+              <div className="navigation-actions" aria-label="История папок">
                 <button
                   className="secondary"
-                  onClick={() => {
-                    const previous = trail[trail.length - 1];
-                    setTrail((items) => items.slice(0, -1));
-                    void showDirectory(previous);
-                  }}
+                  disabled={navigationIndex <= 0}
+                  onClick={() => void moveInNavigation(navigationIndex - 1)}
                 >
                   Назад
                 </button>
-              )}
+                <button
+                  className="secondary"
+                  disabled={navigationIndex >= navigation.length - 1}
+                  onClick={() => void moveInNavigation(navigationIndex + 1)}
+                >
+                  Вперёд
+                </button>
+              </div>
             </div>
+            <nav className="breadcrumbs" aria-label="Путь к каталогу">
+              <ol>
+                {navigation
+                  .slice(0, navigationIndex + 1)
+                  .map((entry, index) => (
+                    <li key={`${entry.id}-${index}`}>
+                      <button
+                        className="breadcrumb"
+                        disabled={index === navigationIndex}
+                        aria-current={
+                          index === navigationIndex ? "page" : undefined
+                        }
+                        onClick={() => void moveInNavigation(index)}
+                      >
+                        {index === 0 ? entry.name || entry.path : entry.name}
+                      </button>
+                    </li>
+                  ))}
+              </ol>
+            </nav>
             <label className="folder-sort">
               Сортировка
               <select
@@ -394,10 +597,7 @@ export function AnalyzerPanel({
               items={sortFolderItems(children.items, folderSort)}
               selected={new Set(selected.map((entry) => entry.id))}
               onToggle={toggleSelection}
-              onDirectory={(entry) => {
-                setTrail((items) => [...items, directory]);
-                void showDirectory(entry);
-              }}
+              onDirectory={(entry) => void openDirectory(entry)}
               onAction={(entry, action) => void actOnEntry(entry, action)}
               onTrash={trash ? (entry) => void trashEntry(entry) : undefined}
             />
@@ -432,6 +632,13 @@ export function AnalyzerPanel({
               </button>
             )}
           </section>
+          {categories && (
+            <DiskOverview
+              scan={scan}
+              categories={categories}
+              onCategory={(category) => void showCategory(category)}
+            />
+          )}
           <section className="analysis-block" aria-labelledby="large-title">
             <div className="panel-heading">
               <h3 id="large-title">Крупные файлы</h3>

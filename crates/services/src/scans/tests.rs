@@ -723,6 +723,10 @@ fn hardlinks_are_indexed_as_distinct_paths_with_the_documented_path_size_semanti
     let linked = f.root.join("linked.bin");
     fs::write(&original, [0; 13]).unwrap();
     fs::hard_link(&original, &linked).unwrap();
+    assert_eq!(
+        NativeFileSystem.metadata(&original).unwrap().link_count,
+        Some(2)
+    );
 
     let result = run_fixture(&f, Arc::new(NativeFileSystem));
     assert_eq!(result.state, ScanState::Completed);
@@ -763,6 +767,39 @@ fn hardlinks_are_indexed_as_distinct_paths_with_the_documented_path_size_semanti
     assert_eq!(identities.len(), 2);
     assert!(identities[0].is_some());
     assert_eq!(identities[0], identities[1]);
+
+    let service = f.service();
+    let root = service.root(&result.id).unwrap();
+    let mut entries = service.children(&result.id, &root.id, None).unwrap().items;
+    let trash = RecordingTrash {
+        paths: Mutex::new(vec![]),
+    };
+    let first = entries.pop().unwrap();
+    service
+        .move_to_trash_with(&result.id, &first.id, &trash, &NativeFileSystem)
+        .unwrap();
+    assert_eq!(
+        service
+            .get_scan(Some(&result.id))
+            .unwrap()
+            .unwrap()
+            .unique_allocated_size,
+        result.unique_allocated_size
+    );
+    let second = entries.pop().unwrap();
+    service
+        .move_to_trash_with(&result.id, &second.id, &trash, &NativeFileSystem)
+        .unwrap();
+    assert_eq!(
+        service
+            .get_scan(Some(&result.id))
+            .unwrap()
+            .unwrap()
+            .unique_allocated_size
+            .as_deref(),
+        Some("0")
+    );
+    service.shutdown().unwrap();
 }
 
 #[cfg(unix)]
@@ -776,6 +813,7 @@ fn sparse_file_reports_logical_and_allocated_sizes_separately() {
         .unwrap();
     let native = NativeFileSystem.metadata(&sparse).unwrap();
     assert_eq!(native.logical_size, 1024 * 1024 * 1024);
+    assert_eq!(native.link_count, Some(1));
     assert!(native.allocated_size.unwrap() < native.logical_size);
 
     let result = run_fixture(&f, Arc::new(NativeFileSystem));

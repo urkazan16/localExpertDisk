@@ -8,11 +8,18 @@ import {
   type DuplicateGroupPage,
   type ScanComparison,
   type ScanHistoryPage,
+  type ScanSession,
 } from "./api/generated";
 import { errorMessage } from "./api/errors";
 import { formatBytes } from "./ScanPanel";
 
-export function HistoryDuplicatesPanel({ enabled }: { enabled: boolean }) {
+export function HistoryDuplicatesPanel({
+  enabled,
+  onOpenScan,
+}: {
+  enabled: boolean;
+  onOpenScan?: (scan: ScanSession) => void;
+}) {
   const [history, setHistory] = useState<ScanHistoryPage | null>(null);
   const [comparison, setComparison] = useState<ScanComparison | null>(null);
   const [duplicates, setDuplicates] = useState<DuplicateGroupPage | null>(null);
@@ -62,17 +69,24 @@ export function HistoryDuplicatesPanel({ enabled }: { enabled: boolean }) {
             <p>
               #{scan.id} · {formatBytes(scan.logical_size)} · {scan.state}
             </p>
-            <button
-              className="secondary"
-              onClick={() =>
-                deleteScanHistory(scan.id).then(
-                  loadHistory,
-                  (reason: unknown) => setError(errorMessage(reason)),
-                )
-              }
-            >
-              Удалить из истории
-            </button>
+            <div className="history-actions">
+              {readableHistoryState(scan) && onOpenScan && (
+                <button className="secondary" onClick={() => onOpenScan(scan)}>
+                  Открыть анализ
+                </button>
+              )}
+              <button
+                className="secondary"
+                onClick={() =>
+                  deleteScanHistory(scan.id).then(
+                    loadHistory,
+                    (reason: unknown) => setError(errorMessage(reason)),
+                  )
+                }
+              >
+                Удалить из истории
+              </button>
+            </div>
           </div>
         ))}
         {history && history.items.length > 1 && (
@@ -147,4 +161,8 @@ export function HistoryDuplicatesPanel({ enabled }: { enabled: boolean }) {
       </section>
     </section>
   );
+}
+
+function readableHistoryState(scan: ScanSession): boolean {
+  return ["completed", "partial", "cancelled"].includes(scan.state);
 }

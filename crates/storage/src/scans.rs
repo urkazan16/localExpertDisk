@@ -456,20 +456,30 @@ impl SqliteStorage {
                 |row| row.get(0),
             )
             .map_err(storage_error)?;
+        let mut insert_identity = tx
+            .prepare_cached(
+                "INSERT OR IGNORE INTO scan_file_identities(scan_id,identity,allocated_size) VALUES (?1,?2,?3)",
+            )
+            .map_err(storage_error)?;
+        let mut insert_entry = tx
+            .prepare_cached("INSERT INTO entries(scan_id,parent_id,path,name,kind,logical_size,allocated_size,created_at_ms,modified_at_ms,accessed_at_ms,identity) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)")
+            .map_err(storage_error)?;
         for entry in entries {
             let m = &entry.metadata;
             if m.kind == EntryKind::File {
                 unique_allocated = match (unique_allocated, m.allocated_size) {
                     (Some(total), Some(size)) => {
-                        let already_seen = match &m.identity {
-                            Some(identity) => tx
-                                .execute(
-                                    "INSERT OR IGNORE INTO scan_file_identities(scan_id,identity,allocated_size) VALUES (?1,?2,?3)",
-                                    params![scan_id, identity, integer(size)?],
-                                )
-                                .map_err(storage_error)?
-                                == 0,
-                            None => false,
+                        let already_seen = match (&m.identity, m.link_count) {
+                            // The overwhelming majority of files have exactly one link and
+                            // therefore cannot collide with an earlier path in this scan.
+                            (_, Some(1)) => false,
+                            (Some(identity), _) => {
+                                insert_identity
+                                    .execute(params![scan_id, identity, integer(size)?])
+                                    .map_err(storage_error)?
+                                    == 0
+                            }
+                            (None, _) => false,
                         };
                         if already_seen {
                             Some(total)
@@ -484,7 +494,21 @@ impl SqliteStorage {
                     _ => None,
                 };
             }
-            tx.execute("INSERT INTO entries(scan_id,parent_id,path,name,kind,logical_size,allocated_size,created_at_ms,modified_at_ms,accessed_at_ms,identity) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)", params![scan_id,parent,encode_path(&entry.path),entry.path.file_name().unwrap_or_default().to_string_lossy(),m.kind.as_str(),integer(m.logical_size)?,m.allocated_size.map(integer).transpose()?,m.created_at_ms,m.modified_at_ms,m.accessed_at_ms,m.identity]).map_err(storage_error)?;
+            insert_entry
+                .execute(params![
+                    scan_id,
+                    parent,
+                    encode_path(&entry.path),
+                    entry.path.file_name().unwrap_or_default().to_string_lossy(),
+                    m.kind.as_str(),
+                    integer(m.logical_size)?,
+                    m.allocated_size.map(integer).transpose()?,
+                    m.created_at_ms,
+                    m.modified_at_ms,
+                    m.accessed_at_ms,
+                    m.identity
+                ])
+                .map_err(storage_error)?;
             if m.kind == EntryKind::Directory {
                 let id = tx.last_insert_rowid();
                 tx.execute("INSERT INTO directory_queue(entry_id) VALUES (?1)", [id])
@@ -508,13 +532,20 @@ impl SqliteStorage {
                 ..Default::default()
             })?;
         }
+        drop(insert_entry);
+        drop(insert_identity);
         update_aggregate(&tx, parent, direct)?;
-        for issue in issues {
-            tx.execute(
-                "INSERT INTO scan_errors(scan_id,path,code,operation) VALUES (?1,?2,?3,?4)",
-                params![scan_id, issue.path, issue.code, issue.operation],
-            )
-            .map_err(storage_error)?;
+        if !issues.is_empty() {
+            let mut insert_issue = tx
+                .prepare_cached(
+                    "INSERT INTO scan_errors(scan_id,path,code,operation) VALUES (?1,?2,?3,?4)",
+                )
+                .map_err(storage_error)?;
+            for issue in issues {
+                insert_issue
+                    .execute(params![scan_id, issue.path, issue.code, issue.operation])
+                    .map_err(storage_error)?;
+            }
         }
         let allocated_size = totals.allocated.map(integer).transpose()?;
         tx.execute("UPDATE scan_sessions SET files_count=?2,directories_count=?3,symlinks_count=?4,skipped_count=?5,logical_size=?6,allocated_size=?7,errors_count=?8,unique_allocated_size=?9 WHERE id=?1", params![scan_id,integer(totals.files)?,integer(totals.directories)?,integer(totals.symlinks)?,integer(totals.skipped)?,integer(totals.logical)?,allocated_size,integer(totals.errors)?,unique_allocated]).map_err(storage_error)?;
@@ -1035,11 +1066,17 @@ impl SqliteStorage {
             .query_row(
                 "SELECT CASE
                    WHEN EXISTS(SELECT 1 FROM entries WHERE scan_id=?1 AND kind='file' AND allocated_size IS NULL) THEN NULL
-                   ELSE COALESCE(SUM(allocated_size),0)
-                 END
-                 FROM entries e
-                 WHERE scan_id=?1 AND kind='file'
-                   AND (identity IS NULL OR id=(SELECT MIN(first.id) FROM entries first WHERE first.scan_id=e.scan_id AND first.kind='file' AND first.identity=e.identity))",
+                   ELSE COALESCE((
+                     SELECT SUM(size) FROM (
+                       SELECT allocated_size AS size FROM entries
+                       WHERE scan_id=?1 AND kind='file' AND identity IS NULL
+                       UNION ALL
+                       SELECT MAX(allocated_size) AS size FROM entries
+                       WHERE scan_id=?1 AND kind='file' AND identity IS NOT NULL
+                       GROUP BY identity
+                     )
+                   ),0)
+                 END",
                 [scan_id],
                 |row| row.get(0),
             )
