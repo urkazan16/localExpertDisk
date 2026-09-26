@@ -11,11 +11,14 @@ import {
 } from "./api/generated";
 import { formatBytes } from "./ScanPanel";
 import {
+  type AnalyzerResultMode,
   type DirectoryVisualizationMode,
   type FolderSort,
 } from "./state/analyzerState";
 import { useAnalyzerController } from "./state/useAnalyzerController";
 import { ColumnBrowser } from "./components/ColumnBrowser";
+import { SelectionActionBar } from "./components/SelectionActionBar";
+import { InlineAlert, SegmentedControl } from "./ui/primitives";
 
 const kindLabels = {
   directory: "Каталог",
@@ -660,6 +663,10 @@ export function AnalyzerPanel({
   trash?: boolean;
 }) {
   const controller = useAnalyzerController({ enabled, scan });
+  const [trashNotice, setTrashNotice] = useState<{
+    moved: number;
+    failed: IndexedEntry[];
+  } | null>(null);
   const { domain, ui } = controller.state;
   const {
     root,
@@ -687,23 +694,30 @@ export function AnalyzerPanel({
     largeSort,
     searchText,
     searchQuery,
+    resultMode,
     error,
   } = ui;
   const { loading, usable } = controller;
 
+  useEffect(() => setTrashNotice(null), [scan?.id]);
+
   function submitSearch(event: FormEvent) {
     event.preventDefault();
-    void controller.runSearch(searchText.trim());
+    const query = searchText.trim();
+    if (!query) return;
+    controller.setResultMode("search");
+    void controller.runSearch(query);
   }
 
-  function confirmTrashEntry(entry: IndexedEntry) {
-    if (window.confirm(`Переместить «${entry.name || entry.path}» в корзину?`))
-      void controller.trashEntry(entry);
-  }
-
-  function confirmTrashSelected() {
-    if (window.confirm(`Переместить в корзину ${selected.length} объектов?`))
-      void controller.trashSelected();
+  async function trashSelected() {
+    const before = [...selected];
+    const result = await controller.trashSelected();
+    if (!result) return;
+    const failedIds = new Set(result.failed_entry_ids);
+    setTrashNotice({
+      moved: result.moved_entry_ids.length,
+      failed: before.filter((entry) => failedIds.has(entry.id)),
+    });
   }
 
   if (!scan || !isTerminalCandidate(scan)) return null;
@@ -726,287 +740,232 @@ export function AnalyzerPanel({
       {error && <p role="alert">{error}</p>}
       {usable && root && directory && columns[0]?.page && (
         <>
-          <div className="structure-workspace">
-            <section
-              className="analysis-block"
-              aria-labelledby="explorer-title"
-            >
-              <div className="panel-heading">
-                <div>
-                  <h3 id="explorer-title">Проводник папок</h3>
-                  <p className="scan-path">{directory.path}</p>
-                </div>
-                <div className="navigation-actions" aria-label="История папок">
-                  <button
-                    className="secondary"
-                    disabled={navigationIndex <= 0}
-                    onClick={() =>
-                      void controller.navigateTo(navigationIndex - 1)
-                    }
-                  >
-                    Назад
-                  </button>
-                  <button
-                    className="secondary"
-                    disabled={navigationIndex >= navigation.length - 1}
-                    onClick={() =>
-                      void controller.navigateTo(navigationIndex + 1)
-                    }
-                  >
-                    Вперёд
-                  </button>
-                </div>
-              </div>
-              <nav className="breadcrumbs" aria-label="Путь к каталогу">
-                <ol>
-                  {navigation
-                    .slice(0, navigationIndex + 1)
-                    .map((entry, index) => (
-                      <li key={`${entry.id}-${index}`}>
-                        <button
-                          className="breadcrumb"
-                          disabled={index === navigationIndex}
-                          aria-current={
-                            index === navigationIndex ? "page" : undefined
-                          }
-                          onClick={() => void controller.navigateTo(index)}
-                        >
-                          {index === 0 ? entry.name || entry.path : entry.name}
-                        </button>
-                      </li>
-                    ))}
-                </ol>
-              </nav>
-              <label className="folder-sort">
-                Сортировка
-                <select
-                  aria-label="Сортировка содержимого каталога"
-                  value={folderSort}
-                  onChange={(event) =>
-                    controller.setFolderSort(event.target.value as FolderSort)
-                  }
-                >
-                  <option value="size_desc">Размер: больше сначала</option>
-                  <option value="name_asc">Имя: А–Я</option>
-                </select>
-              </label>
-              <ColumnBrowser
-                columns={columns}
-                currentIndex={navigationIndex}
-                focusedEntryId={focusedEntryId}
-                navigation={navigation}
-                scrollOffsets={ui.columnScrollOffsets}
-                selected={selected}
-                sort={folderSort}
-                onActivate={(entry) => void controller.activateDirectory(entry)}
-                onAction={(entry, action) =>
-                  void controller.actOnEntry(entry, action)
+          <div className="analyzer-mode-header">
+            <SegmentedControl<AnalyzerResultMode>
+              label="Режим результатов"
+              onChange={controller.setResultMode}
+              options={[
+                { value: "structure", label: "Структура" },
+                { value: "large", label: "Крупные файлы" },
+                { value: "categories", label: "Категории" },
+                { value: "search", label: "Поиск" },
+              ]}
+              value={resultMode}
+            />
+            <form className="analyzer-header-search" onSubmit={submitSearch}>
+              <label htmlFor="entry-search">Имя или часть имени</label>
+              <input
+                id="entry-search"
+                maxLength={256}
+                onChange={(event) =>
+                  controller.setSearchText(event.target.value)
                 }
-                onFocus={controller.focusEntry}
-                onLoadNext={(index) =>
-                  void controller.loadNextDirectoryPage(index)
-                }
-                onNavigate={(index) => void controller.navigateTo(index)}
-                onScroll={controller.setColumnScroll}
-                onSelect={controller.selectEntry}
-                onSelectAll={controller.selectAll}
-                onToggle={controller.toggleSelection}
+                placeholder="Имя или часть имени"
+                value={searchText}
               />
-              {selected.length > 0 && (
-                <div className="selection-bar">
-                  Выбрано: {selected.length} ·{" "}
-                  {formatBytes(
-                    selected
-                      .reduce(
-                        (total, entry) => total + BigInt(entry.aggregate_size),
-                        0n,
-                      )
-                      .toString(),
-                  )}
-                  {selected.length === 1 && (
-                    <>
-                      <button
-                        className="secondary"
-                        onClick={() =>
-                          void controller.actOnEntry(selected[0], "open")
-                        }
-                      >
-                        Открыть в системе
-                      </button>
-                      <button
-                        className="secondary"
-                        onClick={() =>
-                          void controller.actOnEntry(selected[0], "reveal")
-                        }
-                      >
-                        Показать в системе
-                      </button>
-                    </>
-                  )}
-                  {trash && (
-                    <button
-                      className="secondary danger"
-                      disabled={loading}
-                      onClick={confirmTrashSelected}
-                    >
-                      Переместить в корзину
-                    </button>
-                  )}
-                </div>
-              )}
-            </section>
-            <DirectoryVisualization
-              map={directoryMap}
-              metric={directoryMapMetric}
-              mode={visualizationMode}
-              scan={scan}
-              loading={directoryMapLoading}
-              error={directoryMapError}
-              onMetric={controller.setDirectoryMapMetric}
-              onMode={controller.setVisualizationMode}
-              onDirectory={(entries) =>
-                void controller.activateDirectoryPath(entries)
-              }
-              onSelect={controller.selectEntry}
-              selected={selected}
-            />
-          </div>
-          {categories && (
-            <DiskOverview
-              scan={scan}
-              categories={categories}
-              onCategory={(category) => void controller.showCategory(category)}
-            />
-          )}
-          <section className="analysis-block" aria-labelledby="large-title">
-            <div className="panel-heading">
-              <h3 id="large-title">Крупные файлы</h3>
-              <button
-                className="secondary"
-                onClick={() => void controller.showLargeFiles()}
-              >
-                Показать крупные файлы
+              <button type="submit" disabled={!searchText.trim()}>
+                Найти
               </button>
-            </div>
-            <div className="old-files-filter">
-              <label>
-                Минимум, байт{" "}
-                <input
-                  value={largeMinSize}
-                  inputMode="numeric"
-                  onChange={(event) =>
-                    controller.setLargeMinSize(
-                      event.target.value.replace(/\D/g, ""),
-                    )
+            </form>
+          </div>
+
+          {resultMode === "structure" && (
+            <div className="structure-workspace">
+              <section
+                className="analysis-block"
+                aria-labelledby="explorer-title"
+              >
+                <div className="panel-heading">
+                  <div>
+                    <h3 id="explorer-title">Проводник папок</h3>
+                    <p className="scan-path">{directory.path}</p>
+                  </div>
+                  <div
+                    className="navigation-actions"
+                    aria-label="История папок"
+                  >
+                    <button
+                      className="secondary"
+                      disabled={navigationIndex <= 0}
+                      onClick={() =>
+                        void controller.navigateTo(navigationIndex - 1)
+                      }
+                    >
+                      Назад
+                    </button>
+                    <button
+                      className="secondary"
+                      disabled={navigationIndex >= navigation.length - 1}
+                      onClick={() =>
+                        void controller.navigateTo(navigationIndex + 1)
+                      }
+                    >
+                      Вперёд
+                    </button>
+                  </div>
+                </div>
+                <nav className="breadcrumbs" aria-label="Путь к каталогу">
+                  <ol>
+                    {navigation
+                      .slice(0, navigationIndex + 1)
+                      .map((entry, index) => (
+                        <li key={`${entry.id}-${index}`}>
+                          <button
+                            className="breadcrumb"
+                            disabled={index === navigationIndex}
+                            aria-current={
+                              index === navigationIndex ? "page" : undefined
+                            }
+                            onClick={() => void controller.navigateTo(index)}
+                          >
+                            {index === 0
+                              ? entry.name || entry.path
+                              : entry.name}
+                          </button>
+                        </li>
+                      ))}
+                  </ol>
+                </nav>
+                <label className="folder-sort">
+                  Сортировка
+                  <select
+                    aria-label="Сортировка содержимого каталога"
+                    value={folderSort}
+                    onChange={(event) =>
+                      controller.setFolderSort(event.target.value as FolderSort)
+                    }
+                  >
+                    <option value="size_desc">Размер: больше сначала</option>
+                    <option value="name_asc">Имя: А–Я</option>
+                  </select>
+                </label>
+                <ColumnBrowser
+                  columns={columns}
+                  currentIndex={navigationIndex}
+                  focusedEntryId={focusedEntryId}
+                  navigation={navigation}
+                  scrollOffsets={ui.columnScrollOffsets}
+                  selected={selected}
+                  sort={folderSort}
+                  onActivate={(entry) =>
+                    void controller.activateDirectory(entry)
                   }
-                />
-              </label>
-              <label>
-                Категория{" "}
-                <select
-                  value={largeCategory}
-                  onChange={(event) =>
-                    controller.setLargeCategory(
-                      event.target.value as FileCategory | "",
-                    )
-                  }
-                >
-                  <option value="">Все</option>
-                  {Object.entries(categoryLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Сортировка{" "}
-                <select
-                  value={largeSort}
-                  onChange={(event) =>
-                    controller.setLargeSort(event.target.value as FileSort)
-                  }
-                >
-                  <option value="size_desc">Размер</option>
-                  <option value="modified_desc">Изменён</option>
-                  <option value="name_asc">Имя</option>
-                </select>
-              </label>
-            </div>
-            {largeFiles && (
-              <>
-                <EntryRows
-                  items={largeFiles.items}
                   onAction={(entry, action) =>
                     void controller.actOnEntry(entry, action)
                   }
-                  onTrash={trash ? confirmTrashEntry : undefined}
+                  onFocus={controller.focusEntry}
+                  onLoadNext={(index) =>
+                    void controller.loadNextDirectoryPage(index)
+                  }
+                  onNavigate={(index) => void controller.navigateTo(index)}
+                  onScroll={controller.setColumnScroll}
+                  onSelect={controller.selectEntry}
+                  onSelectAll={controller.selectAll}
+                  onToggle={controller.toggleSelection}
                 />
-                {largeFiles.next_cursor && (
-                  <button
-                    className="secondary"
-                    onClick={() =>
-                      void controller.showLargeFiles(largeFiles.next_cursor)
-                    }
-                  >
-                    Следующая страница
-                  </button>
-                )}
-              </>
-            )}
-          </section>
-          <section
-            className="analysis-block"
-            aria-labelledby="categories-title"
-          >
-            <h3 id="categories-title">Категории файлов</h3>
-            {categories &&
-              (categories.length ? (
-                <ul className="category-list">
-                  {categories.map((item) => (
-                    <li key={item.category}>
-                      <button
-                        className="secondary"
-                        onClick={() =>
-                          void controller.showCategory(item.category)
-                        }
-                      >
-                        {categoryLabels[item.category]}
-                      </button>
-                      <strong>
-                        {formatBytes(item.logical_size)} · {item.files_count}{" "}
-                        шт.
-                      </strong>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="hint">Файлы для категоризации не найдены.</p>
-              ))}
-          </section>
-          {activeCategory && categoryFiles && (
-            <section
-              className="analysis-block"
-              aria-labelledby="category-files-title"
-            >
-              <h3 id="category-files-title">
-                {categoryLabels[activeCategory]}
-              </h3>
-              <EntryRows
-                items={categoryFiles.items}
-                onAction={(entry, action) =>
-                  void controller.actOnEntry(entry, action)
+              </section>
+              <DirectoryVisualization
+                map={directoryMap}
+                metric={directoryMapMetric}
+                mode={visualizationMode}
+                scan={scan}
+                loading={directoryMapLoading}
+                error={directoryMapError}
+                onMetric={controller.setDirectoryMapMetric}
+                onMode={controller.setVisualizationMode}
+                onDirectory={(entries) =>
+                  void controller.activateDirectoryPath(entries)
                 }
-                onTrash={trash ? confirmTrashEntry : undefined}
+                onSelect={controller.selectEntry}
+                selected={selected}
               />
-              {categoryFiles.next_cursor && (
+            </div>
+          )}
+
+          {resultMode === "large" && (
+            <section className="analysis-block" aria-labelledby="large-title">
+              <div className="panel-heading">
+                <div>
+                  <h3 id="large-title">Крупные файлы</h3>
+                  <p className="hint">
+                    Выборка строится по сохранённому локальному индексу.
+                  </p>
+                </div>
                 <button
                   className="secondary"
+                  disabled={loading}
+                  onClick={() => void controller.showLargeFiles()}
+                >
+                  Обновить выборку
+                </button>
+              </div>
+              <div className="result-filters">
+                <label>
+                  Минимум, байт
+                  <input
+                    aria-label="Минимальный размер крупного файла"
+                    inputMode="numeric"
+                    onChange={(event) =>
+                      controller.setLargeMinSize(
+                        event.target.value.replace(/\D/g, ""),
+                      )
+                    }
+                    value={largeMinSize}
+                  />
+                </label>
+                <label>
+                  Категория
+                  <select
+                    aria-label="Категория крупных файлов"
+                    onChange={(event) =>
+                      controller.setLargeCategory(
+                        event.target.value as FileCategory | "",
+                      )
+                    }
+                    value={largeCategory}
+                  >
+                    <option value="">Все</option>
+                    {Object.entries(categoryLabels).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Сортировка
+                  <select
+                    aria-label="Сортировка крупных файлов"
+                    onChange={(event) =>
+                      controller.setLargeSort(event.target.value as FileSort)
+                    }
+                    value={largeSort}
+                  >
+                    <option value="size_desc">Размер</option>
+                    <option value="modified_desc">Изменён</option>
+                    <option value="name_asc">Имя</option>
+                  </select>
+                </label>
+              </div>
+              {!largeFiles ? (
+                <p className="hint">
+                  Нажмите «Обновить выборку», чтобы показать файлы.
+                </p>
+              ) : largeFiles.items.length ? (
+                <EntryRows
+                  items={largeFiles.items}
+                  onToggle={controller.toggleSelection}
+                  selected={new Set(selected.map((entry) => entry.id))}
+                />
+              ) : (
+                <p className="hint">Крупные файлы не найдены.</p>
+              )}
+              {largeFiles?.next_cursor && (
+                <button
+                  className="secondary"
+                  disabled={loading}
                   onClick={() =>
-                    void controller.showCategory(
-                      activeCategory,
-                      categoryFiles.next_cursor,
-                    )
+                    void controller.showLargeFiles(largeFiles.next_cursor)
                   }
                 >
                   Следующая страница
@@ -1014,50 +973,152 @@ export function AnalyzerPanel({
               )}
             </section>
           )}
-          <section className="analysis-block" aria-labelledby="search-title">
-            <h3 id="search-title">Поиск по имени</h3>
-            <form
-              className="search-form"
-              onSubmit={(event) => void submitSearch(event)}
-            >
-              <label htmlFor="entry-search">Имя или часть имени</label>
-              <div className="path-row">
-                <input
-                  id="entry-search"
-                  value={searchText}
-                  maxLength={256}
-                  onChange={(event) =>
-                    controller.setSearchText(event.target.value)
-                  }
-                />
-                <button type="submit" disabled={!searchText.trim()}>
-                  Найти
-                </button>
-              </div>
-            </form>
-            {search && (
-              <>
-                <EntryRows
-                  items={search.items}
-                  onAction={(entry, action) =>
-                    void controller.actOnEntry(entry, action)
-                  }
-                  onTrash={trash ? confirmTrashEntry : undefined}
-                />
-                {search.next_cursor && (
+
+          {resultMode === "categories" && categories && (
+            <>
+              <DiskOverview
+                scan={scan}
+                categories={categories}
+                onCategory={(category) => {
+                  controller.setResultMode("categories");
+                  void controller.showCategory(category);
+                }}
+              />
+              <section
+                className="analysis-block"
+                aria-labelledby="categories-title"
+              >
+                <h3 id="categories-title">Категории файлов</h3>
+                {categories &&
+                  (categories.length ? (
+                    <ul className="category-list">
+                      {categories.map((item) => (
+                        <li key={item.category}>
+                          <button
+                            className="secondary"
+                            onClick={() =>
+                              void controller.showCategory(item.category)
+                            }
+                          >
+                            {categoryLabels[item.category]}
+                          </button>
+                          <strong>
+                            {formatBytes(item.logical_size)} ·{" "}
+                            {item.files_count} шт.
+                          </strong>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="hint">Файлы для категоризации не найдены.</p>
+                  ))}
+              </section>
+              {activeCategory && categoryFiles && (
+                <section
+                  className="analysis-block"
+                  aria-labelledby="category-files-title"
+                >
+                  <h3 id="category-files-title">
+                    {categoryLabels[activeCategory]}
+                  </h3>
+                  <EntryRows
+                    items={categoryFiles.items}
+                    onToggle={controller.toggleSelection}
+                    selected={new Set(selected.map((entry) => entry.id))}
+                  />
+                  {categoryFiles.next_cursor && (
+                    <button
+                      className="secondary"
+                      onClick={() =>
+                        void controller.showCategory(
+                          activeCategory,
+                          categoryFiles.next_cursor,
+                        )
+                      }
+                    >
+                      Следующая страница
+                    </button>
+                  )}
+                </section>
+              )}
+            </>
+          )}
+
+          {resultMode === "search" && (
+            <section className="analysis-block" aria-labelledby="search-title">
+              <div className="panel-heading">
+                <div>
+                  <h3 id="search-title">Результаты поиска</h3>
+                  <p className="hint">
+                    {searchQuery
+                      ? `Запрос: «${searchQuery}»`
+                      : "Введите имя в строке поиска выше."}
+                  </p>
+                </div>
+                {searchQuery && (
                   <button
                     className="secondary"
-                    disabled={loading}
-                    onClick={() =>
-                      void controller.runSearch(searchQuery, search.next_cursor)
-                    }
+                    onClick={() => controller.clearSearch()}
                   >
-                    Следующая страница поиска
+                    Очистить
                   </button>
                 )}
-              </>
-            )}
-          </section>
+              </div>
+              {!search ? null : search.items.length ? (
+                <EntryRows
+                  items={search.items}
+                  onToggle={controller.toggleSelection}
+                  selected={new Set(selected.map((entry) => entry.id))}
+                />
+              ) : (
+                <p className="hint">Совпадения не найдены.</p>
+              )}
+              {search?.next_cursor && (
+                <button
+                  className="secondary"
+                  disabled={loading}
+                  onClick={() =>
+                    void controller.runSearch(searchQuery, search.next_cursor)
+                  }
+                >
+                  Следующая страница поиска
+                </button>
+              )}
+            </section>
+          )}
+
+          {trashNotice && (
+            <InlineAlert
+              title={
+                trashNotice.failed.length
+                  ? "Часть объектов не перемещена"
+                  : "Объекты перемещены в корзину"
+              }
+              tone={trashNotice.failed.length ? "warning" : "success"}
+            >
+              Перемещено: {trashNotice.moved}. Не перемещено:{" "}
+              {trashNotice.failed.length}.
+              {trashNotice.failed.length > 0 && (
+                <details>
+                  <summary>Показать оставшиеся объекты</summary>
+                  <ul>
+                    {trashNotice.failed.map((entry) => (
+                      <li key={entry.id}>{entry.path}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </InlineAlert>
+          )}
+          <SelectionActionBar
+            busy={loading}
+            onClear={controller.clearSelection}
+            onOpen={(entry) => void controller.actOnEntry(entry, "open")}
+            onReveal={(entry) => void controller.actOnEntry(entry, "reveal")}
+            onTrash={() => trashSelected()}
+            selected={selected}
+            trashAvailable={trash}
+          />
         </>
       )}
     </section>

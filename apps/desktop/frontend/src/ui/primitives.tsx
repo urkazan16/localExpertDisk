@@ -1,6 +1,7 @@
 import {
   useEffect,
   useId,
+  useRef,
   type ButtonHTMLAttributes,
   type HTMLAttributes,
   type InputHTMLAttributes,
@@ -253,13 +254,28 @@ export function DialogSurface({
   title: string;
 }) {
   const titleId = useId();
+  const surfaceRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!open) return;
+    const previousFocus =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const frame = requestAnimationFrame(() => {
+      const target = surfaceRef.current?.querySelector<HTMLElement>(
+        "[autofocus], button, input, select, textarea, [tabindex]:not([tabindex='-1'])",
+      );
+      target?.focus();
+    });
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", closeOnEscape);
+      previousFocus?.focus();
+    };
   }, [onClose, open]);
   if (!open) return null;
   return (
@@ -268,6 +284,7 @@ export function DialogSurface({
         aria-labelledby={titleId}
         aria-modal="true"
         className="ui-dialog"
+        ref={surfaceRef}
         role="dialog"
       >
         <header className="ui-dialog__header">

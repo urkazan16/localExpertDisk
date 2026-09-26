@@ -153,11 +153,16 @@ function Workspace() {
     case "tool":
       content =
         controller.view === "old-files" ? (
-          <OldFilesPanel enabled={enabled} scan={controller.scan.scan} />
+          <OldFilesPanel
+            enabled={enabled}
+            scan={controller.scan.scan}
+            trash={trash}
+          />
         ) : (
           <HistoryDuplicatesPanel
             activeScanId={controller.scan.scan?.id}
             enabled={enabled}
+            mode={controller.view === "duplicates" ? "duplicates" : "history"}
             onOpenScan={controller.openHistoricalScan}
             trash={trash}
           />

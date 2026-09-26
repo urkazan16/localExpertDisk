@@ -21,6 +21,7 @@ import { errorMessage } from "../api/errors";
 import {
   analyzerReducer,
   createAnalyzerState,
+  type AnalyzerResultMode,
   type DirectoryVisualizationMode,
   type FolderSort,
 } from "./analyzerState";
@@ -122,6 +123,7 @@ export function useAnalyzerController({
     state.domain.directory,
     state.scanId,
     state.ui.directoryMapMetric,
+    state.ui.directoryMapRevision,
     usable,
   ]);
 
@@ -359,6 +361,7 @@ export function useAnalyzerController({
           dispatch({ type: "request/finish" });
       }
     }
+    dispatch({ type: "map/refresh" });
     dispatch({ type: "queries/invalidate" });
   }, [
     invalidateQueries,
@@ -400,12 +403,28 @@ export function useAnalyzerController({
           message: `Не удалось переместить ${result.failed_entry_ids.length} объектов.`,
         });
       await refreshDirectory();
+      if (state.ui.resultMode === "large") await showLargeFiles();
+      else if (state.ui.resultMode === "categories" && state.ui.activeCategory)
+        await showCategory(state.ui.activeCategory);
+      else if (state.ui.resultMode === "search" && state.ui.searchQuery)
+        await runSearch(state.ui.searchQuery);
+      return result;
     } catch (reason: unknown) {
       dispatch({ type: "request/error", message: errorMessage(reason) });
     } finally {
       dispatch({ type: "request/finish" });
     }
-  }, [refreshDirectory, scan, state.ui.selected]);
+  }, [
+    refreshDirectory,
+    runSearch,
+    scan,
+    showCategory,
+    showLargeFiles,
+    state.ui.activeCategory,
+    state.ui.resultMode,
+    state.ui.searchQuery,
+    state.ui.selected,
+  ]);
 
   return {
     state,
@@ -427,12 +446,15 @@ export function useAnalyzerController({
       dispatch({ type: "selection/single", entry }),
     selectAll: (entries: IndexedEntry[]) =>
       dispatch({ type: "selection/all", entries }),
+    clearSelection: () => dispatch({ type: "selection/clear" }),
     focusEntry: (entryId: string | null, columnIndex: number) =>
       dispatch({ type: "focus/entry", entryId, columnIndex }),
     setColumnScroll: (directoryId: string, scrollTop: number) =>
       dispatch({ type: "column/scroll", directoryId, scrollTop }),
     setFolderSort: (sort: FolderSort) =>
       dispatch({ type: "folder/sort", sort }),
+    setResultMode: (mode: AnalyzerResultMode) =>
+      dispatch({ type: "result/mode", mode }),
     setDirectoryMapMetric: (metric: DirectoryMapMetric) =>
       dispatch({ type: "map/metric", metric }),
     setVisualizationMode: (mode: DirectoryVisualizationMode) =>
@@ -443,6 +465,7 @@ export function useAnalyzerController({
       dispatch({ type: "large/filters", category }),
     setLargeSort: (sort: FileSort) => dispatch({ type: "large/filters", sort }),
     setSearchText: (text: string) => dispatch({ type: "search/text", text }),
+    clearSearch: () => dispatch({ type: "search/clear" }),
   };
 }
 

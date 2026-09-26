@@ -74,7 +74,24 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
       );
       await runScan("Сканирование завершено");
 
+      await (await waitForButton("Крупные файлы")).click();
+      await (await waitForButton("Обновить выборку")).click();
+      await (await waitForButton("Категории")).click();
+      await expect($("body")).toHaveText(
+        expect.stringContaining("Обзор диска"),
+      );
+      await (await waitForButton("Структура")).click();
+
       const alpha = await explorerRow("alpha");
+      await alpha.$('input[type="checkbox"]').click();
+      await expect($(".selection-action-bar")).toHaveText(
+        expect.stringContaining("Выбрано: 1"),
+      );
+      await (await waitForButton("В корзину")).click();
+      await expect($("[role='dialog']")).toHaveText(
+        expect.stringContaining("alpha"),
+      );
+      await (await waitForButton("Отмена")).click();
       await alpha.doubleClick();
       const deepMap = await $('[aria-label="Выбрать deep в Sunburst"]');
       await deepMap.waitForDisplayed();
@@ -142,6 +159,7 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
         expect.stringContaining("Добавлено: 1"),
       );
 
+      await (await waitForButton("Дубликаты")).click();
       await (await waitForButton("Проверить содержимое")).click();
       const group = await $(".duplicate-group-toggle");
       await group.waitForClickable({ timeout: 30_000 });

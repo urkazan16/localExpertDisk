@@ -546,6 +546,7 @@ describe("Analyzer UI", () => {
       next_cursor: null,
     });
     render(<AnalyzerPanel enabled scan={scan} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Категории" }));
     expect(await screen.findByText("Обзор диска")).toBeInTheDocument();
     expect(
       screen.getByRole("list", { name: "Карта занятого места" }),
@@ -795,6 +796,7 @@ describe("Analyzer UI", () => {
       .mockResolvedValueOnce({ items: [], next_cursor: "99" })
       .mockResolvedValueOnce({ items: [], next_cursor: null });
     render(<AnalyzerPanel enabled scan={scan} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Категории" }));
     await screen.findByRole("button", { name: "Изображения" });
     fireEvent.click(screen.getByRole("button", { name: "Изображения" }));
     await screen.findByRole("button", { name: "Следующая страница" });
@@ -812,9 +814,8 @@ describe("Analyzer UI", () => {
     render(<AnalyzerPanel enabled scan={scan} />);
     await findInExplorer("nested");
     expect(getFilteredLargeFiles).not.toHaveBeenCalled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Показать крупные файлы" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Крупные файлы" }));
+    fireEvent.click(screen.getByRole("button", { name: "Обновить выборку" }));
     await waitFor(() =>
       expect(getFilteredLargeFiles).toHaveBeenCalledWith(
         "7",
@@ -829,6 +830,31 @@ describe("Analyzer UI", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Найти" }));
     await waitFor(() => expect(searchEntries).toHaveBeenCalledWith("7", "log"));
+  });
+
+  it("keeps one selection model while switching result modes", async () => {
+    const largeEntry = {
+      ...nestedEntry,
+      id: "20",
+      name: "large.bin",
+      path: "/fixture/large.bin",
+      kind: "file" as const,
+      aggregate_size: "100",
+      logical_size: "100",
+    };
+    vi.mocked(getFilteredLargeFiles).mockResolvedValue({
+      items: [largeEntry],
+      next_cursor: null,
+    });
+    render(<AnalyzerPanel enabled scan={scan} />);
+    fireEvent.click(await screen.findByLabelText("Выбрать nested"));
+    expect(screen.getByText("Выбрано: 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Крупные файлы" }));
+    fireEvent.click(screen.getByRole("button", { name: "Обновить выборку" }));
+    fireEvent.click(await screen.findByLabelText("Выбрать large.bin"));
+    expect(screen.getByText("Выбрано: 2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Структура" }));
+    expect(screen.getByLabelText("Выбрать nested")).toBeChecked();
   });
 
   it("does not restore a stale query page after directory activation", async () => {
@@ -856,6 +882,7 @@ describe("Analyzer UI", () => {
       target: { value: "stale" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Найти" }));
+    fireEvent.click(screen.getByRole("button", { name: "Структура" }));
     fireEvent.doubleClick(await findExplorerOption("nested"));
     await screen.findByRole("button", { name: "nested" });
     await act(async () => {
@@ -887,9 +914,8 @@ describe("Analyzer UI", () => {
     render(<AnalyzerPanel enabled scan={scan} />);
     await findInExplorer("nested");
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Показать крупные файлы" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Крупные файлы" }));
+    fireEvent.click(screen.getByRole("button", { name: "Обновить выборку" }));
     await screen.findByRole("button", { name: "Следующая страница" });
     fireEvent.click(screen.getByRole("button", { name: "Следующая страница" }));
     await waitFor(() =>
@@ -934,7 +960,7 @@ describe("Analyzer UI", () => {
     vi.mocked(revealEntry).mockResolvedValue();
     render(<AnalyzerPanel enabled scan={scan} />);
     fireEvent.click(await findExplorerOption("nested"));
-    fireEvent.click(screen.getByRole("button", { name: "Открыть в системе" }));
+    fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
     await waitFor(() => expect(openEntry).toHaveBeenCalledWith("7", "9"));
     fireEvent.click(screen.getByRole("button", { name: "Показать в системе" }));
     await waitFor(() => expect(revealEntry).toHaveBeenCalledWith("7", "9"));
@@ -945,11 +971,11 @@ describe("Analyzer UI", () => {
       moved_entry_ids: ["9"],
       failed_entry_ids: [],
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<AnalyzerPanel enabled scan={scan} trash />);
     fireEvent.click(await findExplorerOption("nested"));
+    fireEvent.click(screen.getByRole("button", { name: "В корзину" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "Переместить в корзину" }),
+      screen.getByRole("button", { name: "Подтвердить перемещение" }),
     );
     await waitFor(() =>
       expect(moveEntriesToTrash).toHaveBeenCalledWith("7", ["9"]),
@@ -962,12 +988,12 @@ describe("Analyzer UI", () => {
       moved_entry_ids: ["9"],
       failed_entry_ids: [],
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<AnalyzerPanel enabled scan={scan} trash />);
     await findInExplorer("nested");
     fireEvent.click(screen.getByLabelText("Выбрать nested"));
+    fireEvent.click(screen.getByRole("button", { name: "В корзину" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "Переместить в корзину" }),
+      screen.getByRole("button", { name: "Подтвердить перемещение" }),
     );
     await waitFor(() =>
       expect(moveEntriesToTrash).toHaveBeenCalledWith("7", ["9"]),
@@ -1002,13 +1028,13 @@ describe("Analyzer UI", () => {
       moved_entry_ids: ["9"],
       failed_entry_ids: ["10"],
     });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<AnalyzerPanel enabled scan={scan} trash />);
     await findInExplorer("first");
     fireEvent.click(screen.getByLabelText("Выбрать first"));
     fireEvent.click(screen.getByLabelText("Выбрать second"));
+    fireEvent.click(screen.getByRole("button", { name: "В корзину" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "Переместить в корзину" }),
+      screen.getByRole("button", { name: "Подтвердить перемещение" }),
     );
     await waitFor(() =>
       expect(screen.getByLabelText("Выбрать second")).toBeChecked(),

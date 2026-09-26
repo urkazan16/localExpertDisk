@@ -83,6 +83,30 @@ describe("History and duplicates UI", () => {
     vi.mocked(cancelDuplicateHashing).mockResolvedValue();
   });
 
+  it("keeps history and duplicate workflows in separate workspace modes", () => {
+    const { rerender } = render(
+      <HistoryDuplicatesPanel enabled mode="duplicates" />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Дубликаты", level: 2 }),
+    ).toBeInTheDocument();
+    expect(getScanHistory).not.toHaveBeenCalled();
+    expect(
+      screen.queryByLabelText("Количество сохраняемых сканирований"),
+    ).not.toBeInTheDocument();
+
+    rerender(<HistoryDuplicatesPanel enabled mode="history" />);
+    expect(
+      screen.getByRole("heading", {
+        name: "История сканирований",
+        level: 2,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Проверить содержимое" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("loads later confirmed duplicate groups without hashing everything again", async () => {
     vi.mocked(confirmDuplicates).mockResolvedValue({
       groups: {
@@ -112,7 +136,7 @@ describe("History and duplicates UI", () => {
       ],
       next_cursor: null,
     });
-    render(<HistoryDuplicatesPanel enabled />);
+    render(<HistoryDuplicatesPanel enabled mode="duplicates" />);
     fireEvent.click(
       screen.getByRole("button", { name: "Проверить содержимое" }),
     );
@@ -279,7 +303,7 @@ describe("History and duplicates UI", () => {
       items: [],
       next_cursor: null,
     });
-    render(<HistoryDuplicatesPanel enabled trash />);
+    render(<HistoryDuplicatesPanel enabled mode="duplicates" trash />);
     fireEvent.click(
       screen.getByRole("button", { name: "Проверить содержимое" }),
     );
@@ -324,7 +348,7 @@ describe("History and duplicates UI", () => {
           });
         }),
     );
-    render(<HistoryDuplicatesPanel enabled />);
+    render(<HistoryDuplicatesPanel enabled mode="duplicates" />);
     fireEvent.click(
       screen.getByRole("button", { name: "Проверить содержимое" }),
     );
@@ -388,7 +412,7 @@ describe("History and duplicates UI", () => {
       items: [],
       next_cursor: null,
     });
-    render(<HistoryDuplicatesPanel enabled trash />);
+    render(<HistoryDuplicatesPanel enabled mode="duplicates" trash />);
     fireEvent.click(
       screen.getByRole("button", { name: "Проверить содержимое" }),
     );

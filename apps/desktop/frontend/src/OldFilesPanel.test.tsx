@@ -1,9 +1,20 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OldFilesPanel } from "./OldFilesPanel";
-import { getOldFiles, type ScanSession } from "./api/generated";
+import {
+  getOldFiles,
+  moveEntriesToTrash,
+  openEntry,
+  revealEntry,
+  type ScanSession,
+} from "./api/generated";
 
-vi.mock("./api/generated", () => ({ getOldFiles: vi.fn() }));
+vi.mock("./api/generated", () => ({
+  getOldFiles: vi.fn(),
+  moveEntriesToTrash: vi.fn(),
+  openEntry: vi.fn(),
+  revealEntry: vi.fn(),
+}));
 
 const scan: ScanSession = {
   id: "7",
@@ -129,5 +140,41 @@ describe("Old files UI", () => {
         null,
       ),
     );
+  });
+
+  it("uses the common selection review before moving old files", async () => {
+    vi.mocked(moveEntriesToTrash).mockResolvedValue({
+      moved_entry_ids: ["8"],
+      failed_entry_ids: [],
+    });
+    render(<OldFilesPanel enabled scan={scan} trash />);
+    fireEvent.click(screen.getByRole("button", { name: "Показать файлы" }));
+    fireEvent.click(await screen.findByLabelText("Выбрать archive.zip"));
+    expect(screen.getByText("Выбрано: 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "В корзину" }));
+    const dialog = screen.getByRole("dialog", {
+      name: "Проверка перед перемещением",
+    });
+    expect(dialog).toHaveTextContent("/fixture/archive.zip");
+    expect(dialog).toHaveTextContent("20 Б");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Подтвердить перемещение" }),
+    );
+    await waitFor(() =>
+      expect(moveEntriesToTrash).toHaveBeenCalledWith("7", ["8"]),
+    );
+  });
+
+  it("keeps common actions disabled until one old file is selected", async () => {
+    render(<OldFilesPanel enabled scan={scan} />);
+    expect(screen.getByRole("button", { name: "Открыть" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Показать в системе" }),
+    ).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "В корзину" }),
+    ).not.toBeInTheDocument();
+    expect(openEntry).not.toHaveBeenCalled();
+    expect(revealEntry).not.toHaveBeenCalled();
   });
 });

@@ -1,12 +1,18 @@
 import { useEffect, useState } from "react";
 import {
   getOldFiles,
+  moveEntriesToTrash,
+  openEntry,
+  revealEntry,
+  type IndexedEntry,
   type OldFileCriterion,
   type OldFilePage,
   type ScanSession,
 } from "./api/generated";
 import { errorMessage } from "./api/errors";
 import { formatBytes } from "./ScanPanel";
+import { SelectionActionBar } from "./components/SelectionActionBar";
+import { InlineAlert } from "./ui/primitives";
 
 const periods = [
   [30, "Более 30 дней"],
@@ -41,9 +47,11 @@ function dateLabel(value: string): string {
 export function OldFilesPanel({
   enabled,
   scan,
+  trash = false,
 }: {
   enabled: boolean;
   scan: ScanSession | null;
+  trash?: boolean;
 }) {
   const [period, setPeriod] = useState<number | "custom">(90);
   const [customDate, setCustomDate] = useState("");
@@ -54,6 +62,11 @@ export function OldFilesPanel({
   const [result, setResult] = useState<OldFilePage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<IndexedEntry[]>([]);
+  const [trashNotice, setTrashNotice] = useState<{
+    moved: number;
+    failed: number;
+  } | null>(null);
   const usable = Boolean(enabled && scan && readableStates.has(scan.state));
 
   useEffect(() => {
@@ -61,6 +74,8 @@ export function OldFilesPanel({
     setQueryCutoff(null);
     setQueryMinSize(null);
     setError(null);
+    setSelected([]);
+    setTrashNotice(null);
   }, [scan?.id, usable]);
 
   function selectedCutoff(): string | null {
@@ -116,6 +131,48 @@ export function OldFilesPanel({
             }
           : page,
       );
+    } catch (reason: unknown) {
+      setError(errorMessage(reason));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function toggleSelection(entry: IndexedEntry) {
+    setSelected((current) =>
+      current.some((item) => item.id === entry.id)
+        ? current.filter((item) => item.id !== entry.id)
+        : [...current, entry],
+    );
+  }
+
+  async function actOnEntry(entry: IndexedEntry, action: "open" | "reveal") {
+    if (!scan) return;
+    setError(null);
+    try {
+      if (action === "open") await openEntry(scan.id, entry.id);
+      else await revealEntry(scan.id, entry.id);
+    } catch (reason: unknown) {
+      setError(errorMessage(reason));
+    }
+  }
+
+  async function trashSelected() {
+    if (!scan || selected.length === 0) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await moveEntriesToTrash(
+        scan.id,
+        selected.map((entry) => entry.id),
+      );
+      const failed = new Set(result.failed_entry_ids);
+      setSelected((current) => current.filter((entry) => failed.has(entry.id)));
+      setTrashNotice({
+        moved: result.moved_entry_ids.length,
+        failed: result.failed_entry_ids.length,
+      });
+      await load();
     } catch (reason: unknown) {
       setError(errorMessage(reason));
     } finally {
@@ -231,11 +288,30 @@ export function OldFilesPanel({
           </button>
           {loading && <p role="status">Ищем в локальном индексе…</p>}
           {error && <p role="alert">{error}</p>}
+          {trashNotice && (
+            <InlineAlert
+              title={
+                trashNotice.failed
+                  ? "Часть старых файлов не перемещена"
+                  : "Старые файлы перемещены"
+              }
+              tone={trashNotice.failed ? "warning" : "success"}
+            >
+              Перемещено: {trashNotice.moved}. Не перемещено:{" "}
+              {trashNotice.failed}.
+            </InlineAlert>
+          )}
           {result &&
             (result.items.length ? (
               <ul className="old-files-list" aria-label="Старые файлы">
                 {result.items.map(({ entry, timestamp_ms }) => (
                   <li key={entry.id}>
+                    <input
+                      aria-label={`Выбрать ${entry.name || entry.path}`}
+                      checked={selected.some((item) => item.id === entry.id)}
+                      onChange={() => toggleSelection(entry)}
+                      type="checkbox"
+                    />
                     <div>
                       <strong>{entry.name || entry.path}</strong>
                       <span>{entry.path}</span>
@@ -261,6 +337,15 @@ export function OldFilesPanel({
               Следующая страница
             </button>
           )}
+          <SelectionActionBar
+            busy={loading}
+            onClear={() => setSelected([])}
+            onOpen={(entry) => void actOnEntry(entry, "open")}
+            onReveal={(entry) => void actOnEntry(entry, "reveal")}
+            onTrash={() => trashSelected()}
+            selected={selected}
+            trashAvailable={trash}
+          />
         </>
       )}
     </section>

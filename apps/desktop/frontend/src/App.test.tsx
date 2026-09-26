@@ -20,7 +20,9 @@ vi.mock("./OldFilesPanel", () => ({
   OldFilesPanel: () => <div>Old files</div>,
 }));
 vi.mock("./HistoryDuplicatesPanel", () => ({
-  HistoryDuplicatesPanel: () => <div>History and duplicates</div>,
+  HistoryDuplicatesPanel: ({ mode }: { mode: string }) => (
+    <div>Tool mode: {mode}</div>
+  ),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: vi.fn() }));
 vi.mock("@tauri-apps/api/path", () => ({
@@ -182,6 +184,15 @@ describe("application shell", () => {
       await screen.findByText("Часть объектов недоступна"),
     ).toBeInTheDocument();
     expect(screen.getByText("Analyzer")).toBeInTheDocument();
+  });
+
+  it("opens history and duplicates as separate workspace modes", async () => {
+    vi.mocked(getScan).mockResolvedValue(partialScan);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "История" }));
+    expect(screen.getByText("Tool mode: history")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Дубликаты" }));
+    expect(screen.getByText("Tool mode: duplicates")).toBeInTheDocument();
   });
 
   it("accepts an absolute path as a fallback selection", async () => {

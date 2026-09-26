@@ -10,6 +10,8 @@ import type {
 
 export type FolderSort = "size_desc" | "name_asc";
 export type DirectoryVisualizationMode = "treemap" | "sunburst";
+export type AnalyzerResultMode =
+  "structure" | "large" | "categories" | "search";
 export type DirectoryColumn = {
   directory: IndexedEntry;
   page: EntryPage | null;
@@ -36,6 +38,7 @@ export type AnalyzerUiState = {
   focusedColumnIndex: number;
   columnScrollOffsets: Record<string, number>;
   folderSort: FolderSort;
+  resultMode: AnalyzerResultMode;
   visualizationMode: DirectoryVisualizationMode;
   directoryMapMetric: DirectoryMapMetric;
   activeCategory: FileCategory | null;
@@ -48,6 +51,7 @@ export type AnalyzerUiState = {
   error: string | null;
   directoryMapLoading: boolean;
   directoryMapError: string | null;
+  directoryMapRevision: number;
 };
 
 export type AnalyzerState = {
@@ -79,6 +83,7 @@ export function createAnalyzerState(
       focusedColumnIndex: 0,
       columnScrollOffsets: {},
       folderSort: "size_desc",
+      resultMode: "structure",
       visualizationMode: "sunburst",
       directoryMapMetric: "logical",
       activeCategory: null,
@@ -91,6 +96,7 @@ export function createAnalyzerState(
       error: null,
       directoryMapLoading: false,
       directoryMapError: null,
+      directoryMapRevision: 0,
     },
   };
 }
@@ -110,6 +116,7 @@ export type AnalyzerAction =
   | { type: "map/start" }
   | { type: "map/success"; map: DirectoryMap }
   | { type: "map/error"; message: string }
+  | { type: "map/refresh" }
   | { type: "map/metric"; metric: DirectoryMapMetric }
   | { type: "visualization/mode"; mode: DirectoryVisualizationMode }
   | { type: "directory/load-start"; entry: IndexedEntry; parentIndex: number }
@@ -133,9 +140,11 @@ export type AnalyzerAction =
   | { type: "selection/replace"; entries: IndexedEntry[] }
   | { type: "selection/single"; entry: IndexedEntry }
   | { type: "selection/all"; entries: IndexedEntry[] }
+  | { type: "selection/clear" }
   | { type: "focus/entry"; entryId: string | null; columnIndex: number }
   | { type: "column/scroll"; directoryId: string; scrollTop: number }
   | { type: "folder/sort"; sort: FolderSort }
+  | { type: "result/mode"; mode: AnalyzerResultMode }
   | {
       type: "large/filters";
       minSize?: string;
@@ -145,6 +154,7 @@ export type AnalyzerAction =
   | { type: "large/success"; page: EntryPage }
   | { type: "category/success"; category: FileCategory; page: EntryPage }
   | { type: "search/text"; text: string }
+  | { type: "search/clear" }
   | { type: "search/success"; query: string; page: EntryPage }
   | { type: "queries/invalidate" };
 
@@ -233,6 +243,14 @@ export function analyzerReducer(
           ...state.ui,
           directoryMapLoading: false,
           directoryMapError: action.message,
+        },
+      };
+    case "map/refresh":
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          directoryMapRevision: state.ui.directoryMapRevision + 1,
         },
       };
     case "map/metric":
@@ -402,6 +420,8 @@ export function analyzerReducer(
       };
     case "selection/all":
       return { ...state, ui: { ...state.ui, selected: action.entries } };
+    case "selection/clear":
+      return { ...state, ui: { ...state.ui, selected: [] } };
     case "focus/entry":
       return {
         ...state,
@@ -424,6 +444,8 @@ export function analyzerReducer(
       };
     case "folder/sort":
       return { ...state, ui: { ...state.ui, folderSort: action.sort } };
+    case "result/mode":
+      return { ...state, ui: { ...state.ui, resultMode: action.mode } };
     case "large/filters":
       return {
         ...state,
@@ -444,6 +466,12 @@ export function analyzerReducer(
       };
     case "search/text":
       return { ...state, ui: { ...state.ui, searchText: action.text } };
+    case "search/clear":
+      return {
+        ...state,
+        domain: { ...state.domain, search: null },
+        ui: { ...state.ui, searchText: "", searchQuery: "", selected: [] },
+      };
     case "search/success":
       return {
         ...state,

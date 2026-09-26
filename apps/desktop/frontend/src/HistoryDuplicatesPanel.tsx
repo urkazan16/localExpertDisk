@@ -32,11 +32,13 @@ export function HistoryDuplicatesPanel({
   activeScanId,
   trash,
   onOpenScan,
+  mode = "history",
 }: {
   enabled: boolean;
   activeScanId?: string | null;
   trash?: boolean;
   onOpenScan?: (scan: ScanSession) => void;
+  mode?: "history" | "duplicates";
 }) {
   const [history, setHistory] = useState<ScanHistoryPage | null>(null);
   const [selectedScans, setSelectedScans] = useState<string[]>([]);
@@ -82,13 +84,13 @@ export function HistoryDuplicatesPanel({
   }
 
   useEffect(() => {
-    if (enabled) {
+    if (enabled && mode === "history") {
       void loadHistory();
       void getRetentionPolicy()
         .then((policy) => setRetention(policy.keep_latest))
         .catch((reason: unknown) => setError(errorMessage(reason)));
     }
-  }, [enabled]);
+  }, [enabled, mode]);
 
   async function updateRetention(keepLatest: number) {
     setRetention(keepLatest);
@@ -304,256 +306,270 @@ export function HistoryDuplicatesPanel({
 
   if (!enabled) return null;
   return (
-    <section className="panel" aria-labelledby="history-title">
-      <h2 id="history-title">История и дубликаты</h2>
+    <section className="panel" aria-labelledby="tool-title">
+      <h2 id="tool-title">
+        {mode === "history" ? "История сканирований" : "Дубликаты"}
+      </h2>
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
-      <section className="analysis-block">
-        <div className="panel-heading">
-          <div>
-            <h3>История сканирований</h3>
-            <p className="hint">
-              Выберите любые два результата одного каталога. Политика хранения
-              применяется автоматически после каждого scan.
-            </p>
-          </div>
-          <div className="retention-controls">
-            <label>
-              Хранить последних
-              <select
-                aria-label="Количество сохраняемых сканирований"
-                value={retention}
-                onChange={(event) =>
-                  void updateRetention(Number(event.target.value))
-                }
+      {mode === "history" && (
+        <section className="analysis-block">
+          <div className="panel-heading">
+            <div>
+              <h3>История сканирований</h3>
+              <p className="hint">
+                Выберите любые два результата одного каталога. Политика хранения
+                применяется автоматически после каждого scan.
+              </p>
+            </div>
+            <div className="retention-controls">
+              <label>
+                Хранить последних
+                <select
+                  aria-label="Количество сохраняемых сканирований"
+                  value={retention}
+                  onChange={(event) =>
+                    void updateRetention(Number(event.target.value))
+                  }
+                >
+                  {[5, 10, 25, 50].map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="secondary"
+                disabled={historyLoading}
+                onClick={() => void cleanupHistory()}
               >
-                {[5, 10, 25, 50].map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-            </label>
+                Очистить старые
+              </button>
+            </div>
+          </div>
+          {history?.items.map((scan) => {
+            const active = scan.id === activeScanId;
+            return (
+              <div
+                className={`history-row${active ? " active" : ""}`}
+                data-scan-id={scan.id}
+                key={scan.id}
+              >
+                <label className="history-choice">
+                  <input
+                    type="checkbox"
+                    checked={selectedScans.includes(scan.id)}
+                    disabled={!readableHistoryState(scan)}
+                    onChange={() => toggleComparedScan(scan.id)}
+                  />
+                  <span>
+                    #{scan.id} · {formatBytes(scan.logical_size)} · {scan.state}
+                    {active && (
+                      <strong className="active-scan-badge">Активный</strong>
+                    )}
+                  </span>
+                </label>
+                <div className="history-actions">
+                  {readableHistoryState(scan) && onOpenScan && (
+                    <button
+                      className="secondary"
+                      onClick={() => onOpenScan(scan)}
+                    >
+                      Открыть анализ
+                    </button>
+                  )}
+                  <button
+                    className="secondary"
+                    disabled={active || !scan.finished_at_ms}
+                    onClick={() => void removeHistory(scan.id)}
+                  >
+                    Удалить из истории
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {history?.next_cursor && (
             <button
               className="secondary"
               disabled={historyLoading}
-              onClick={() => void cleanupHistory()}
+              onClick={() => void loadHistory(history.next_cursor)}
             >
-              Очистить старые
-            </button>
-          </div>
-        </div>
-        {history?.items.map((scan) => {
-          const active = scan.id === activeScanId;
-          return (
-            <div
-              className={`history-row${active ? " active" : ""}`}
-              data-scan-id={scan.id}
-              key={scan.id}
-            >
-              <label className="history-choice">
-                <input
-                  type="checkbox"
-                  checked={selectedScans.includes(scan.id)}
-                  disabled={!readableHistoryState(scan)}
-                  onChange={() => toggleComparedScan(scan.id)}
-                />
-                <span>
-                  #{scan.id} · {formatBytes(scan.logical_size)} · {scan.state}
-                  {active && (
-                    <strong className="active-scan-badge">Активный</strong>
-                  )}
-                </span>
-              </label>
-              <div className="history-actions">
-                {readableHistoryState(scan) && onOpenScan && (
-                  <button
-                    className="secondary"
-                    onClick={() => onOpenScan(scan)}
-                  >
-                    Открыть анализ
-                  </button>
-                )}
-                <button
-                  className="secondary"
-                  disabled={active || !scan.finished_at_ms}
-                  onClick={() => void removeHistory(scan.id)}
-                >
-                  Удалить из истории
-                </button>
-              </div>
-            </div>
-          );
-        })}
-        {history?.next_cursor && (
-          <button
-            className="secondary"
-            disabled={historyLoading}
-            onClick={() => void loadHistory(history.next_cursor)}
-          >
-            Показать более старые
-          </button>
-        )}
-        <button
-          className="secondary"
-          disabled={selectedScans.length !== 2}
-          onClick={() => void compareSelected()}
-        >
-          Сравнить выбранные
-        </button>
-        {comparison && <ComparisonDetails comparison={comparison} />}
-      </section>
-      <section className="analysis-block">
-        <div className="panel-heading">
-          <div>
-            <h3>Подтверждённые дубликаты</h3>
-            <p className="hint">
-              В каждой группе необходимо оставить хотя бы один файл.
-            </p>
-          </div>
-          <button
-            className="secondary"
-            disabled={duplicateLoading}
-            onClick={() => void verifyDuplicates()}
-          >
-            {duplicateLoading ? "Проверяем…" : "Проверить содержимое"}
-          </button>
-          {duplicateLoading && hashProgress && (
-            <button className="secondary" onClick={() => void cancelHashing()}>
-              Остановить проверку
+              Показать более старые
             </button>
           )}
-        </div>
-        {hashProgress && (
-          <p role="status">
-            {hashProgress.phase === "fingerprint" ? "Fingerprint" : "SHA-256"}:{" "}
-            {hashProgress.processed_files} / {hashProgress.total_files}
-          </p>
-        )}
-        {hashFailures.length > 0 && (
-          <FailureList
-            title="Не удалось проверить файлы"
-            failures={hashFailures}
-          />
-        )}
-        {deleteFailures.length > 0 && (
-          <FailureList
-            title="Не удалось переместить файлы"
-            failures={deleteFailures}
-          />
-        )}
-        {duplicates &&
-          (duplicates.items.length ? (
-            <div className="duplicate-groups">
-              {duplicates.items.map((group) => {
-                const page = expanded[group.content_hash];
-                const selectedInGroup =
-                  page?.items.filter((entry) => selectedEntries.has(entry.id))
-                    .length ?? 0;
-                const selectionLimit = Math.max(
-                  0,
-                  Number(group.files_count) - 1,
-                );
-                return (
-                  <section className="duplicate-group" key={group.content_hash}>
-                    <button
-                      className="duplicate-group-toggle secondary"
-                      aria-expanded={Boolean(page)}
-                      onClick={() => void toggleGroup(group.content_hash)}
-                    >
-                      {formatBytes(group.size)} · {group.files_count} файлов ·
-                      можно освободить до {formatBytes(group.reclaimable_size)}
-                    </button>
-                    {page && (
-                      <div className="duplicate-files">
-                        {page.items.map((entry) => {
-                          const checked = selectedEntries.has(entry.id);
-                          return (
-                            <label key={entry.id}>
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                disabled={
-                                  !trash ||
-                                  (!checked &&
-                                    selectedInGroup >= selectionLimit)
-                                }
-                                onChange={() => toggleEntry(entry.id)}
-                              />
-                              <span>{entry.path}</span>
-                            </label>
-                          );
-                        })}
-                        {page.next_cursor && (
-                          <button
-                            className="secondary"
-                            onClick={() =>
-                              void loadMoreFiles(group.content_hash)
-                            }
-                          >
-                            Показать остальные файлы группы
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </section>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="hint">Подтверждённых групп дубликатов нет.</p>
-          ))}
-        {duplicates?.next_cursor && (
           <button
             className="secondary"
-            disabled={duplicateLoading}
-            onClick={() => void loadNextDuplicatePage()}
+            disabled={selectedScans.length !== 2}
+            onClick={() => void compareSelected()}
           >
-            Показать следующие группы
+            Сравнить выбранные
           </button>
-        )}
-        {selectedEntries.size > 0 && (
-          <div className="duplicate-delete-actions">
-            {!confirmDelete ? (
+          {comparison && <ComparisonDetails comparison={comparison} />}
+        </section>
+      )}
+      {mode === "duplicates" && (
+        <section className="analysis-block">
+          <div className="panel-heading">
+            <div>
+              <h3>Подтверждённые дубликаты</h3>
+              <p className="hint">
+                В каждой группе необходимо оставить хотя бы один файл.
+              </p>
+            </div>
+            <button
+              className="secondary"
+              disabled={duplicateLoading}
+              onClick={() => void verifyDuplicates()}
+            >
+              {duplicateLoading ? "Проверяем…" : "Проверить содержимое"}
+            </button>
+            {duplicateLoading && hashProgress && (
               <button
-                disabled={!trash || duplicateLoading}
-                onClick={() => setConfirmDelete(true)}
+                className="secondary"
+                onClick={() => void cancelHashing()}
               >
-                Переместить выбранные в корзину ({selectedEntries.size})
+                Остановить проверку
               </button>
-            ) : (
-              <>
-                <p role="alert">
-                  Файлы будут перемещены в системную корзину после повторной
-                  проверки.
-                </p>
-                <button
-                  disabled={duplicateLoading}
-                  onClick={() => void deleteSelectedDuplicates()}
-                >
-                  Подтвердить перемещение
-                </button>
-                <button
-                  className="secondary"
-                  onClick={() => setConfirmDelete(false)}
-                >
-                  Отмена
-                </button>
-              </>
             )}
           </div>
-        )}
-        {!trash && (
+          {hashProgress && (
+            <p role="status">
+              {hashProgress.phase === "fingerprint" ? "Fingerprint" : "SHA-256"}
+              : {hashProgress.processed_files} / {hashProgress.total_files}
+            </p>
+          )}
+          {hashFailures.length > 0 && (
+            <FailureList
+              title="Не удалось проверить файлы"
+              failures={hashFailures}
+            />
+          )}
+          {deleteFailures.length > 0 && (
+            <FailureList
+              title="Не удалось переместить файлы"
+              failures={deleteFailures}
+            />
+          )}
+          {duplicates &&
+            (duplicates.items.length ? (
+              <div className="duplicate-groups">
+                {duplicates.items.map((group) => {
+                  const page = expanded[group.content_hash];
+                  const selectedInGroup =
+                    page?.items.filter((entry) => selectedEntries.has(entry.id))
+                      .length ?? 0;
+                  const selectionLimit = Math.max(
+                    0,
+                    Number(group.files_count) - 1,
+                  );
+                  return (
+                    <section
+                      className="duplicate-group"
+                      key={group.content_hash}
+                    >
+                      <button
+                        className="duplicate-group-toggle secondary"
+                        aria-expanded={Boolean(page)}
+                        onClick={() => void toggleGroup(group.content_hash)}
+                      >
+                        {formatBytes(group.size)} · {group.files_count} файлов ·
+                        можно освободить до{" "}
+                        {formatBytes(group.reclaimable_size)}
+                      </button>
+                      {page && (
+                        <div className="duplicate-files">
+                          {page.items.map((entry) => {
+                            const checked = selectedEntries.has(entry.id);
+                            return (
+                              <label key={entry.id}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={
+                                    !trash ||
+                                    (!checked &&
+                                      selectedInGroup >= selectionLimit)
+                                  }
+                                  onChange={() => toggleEntry(entry.id)}
+                                />
+                                <span>{entry.path}</span>
+                              </label>
+                            );
+                          })}
+                          {page.next_cursor && (
+                            <button
+                              className="secondary"
+                              onClick={() =>
+                                void loadMoreFiles(group.content_hash)
+                              }
+                            >
+                              Показать остальные файлы группы
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="hint">Подтверждённых групп дубликатов нет.</p>
+            ))}
+          {duplicates?.next_cursor && (
+            <button
+              className="secondary"
+              disabled={duplicateLoading}
+              onClick={() => void loadNextDuplicatePage()}
+            >
+              Показать следующие группы
+            </button>
+          )}
+          {selectedEntries.size > 0 && (
+            <div className="duplicate-delete-actions">
+              {!confirmDelete ? (
+                <button
+                  disabled={!trash || duplicateLoading}
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  Переместить выбранные в корзину ({selectedEntries.size})
+                </button>
+              ) : (
+                <>
+                  <p role="alert">
+                    Файлы будут перемещены в системную корзину после повторной
+                    проверки.
+                  </p>
+                  <button
+                    disabled={duplicateLoading}
+                    onClick={() => void deleteSelectedDuplicates()}
+                  >
+                    Подтвердить перемещение
+                  </button>
+                  <button
+                    className="secondary"
+                    onClick={() => setConfirmDelete(false)}
+                  >
+                    Отмена
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          {!trash && (
+            <p className="hint">
+              Удаление недоступно на этой платформе. Просмотр групп работает без
+              изменений файлов.
+            </p>
+          )}
           <p className="hint">
-            Удаление недоступно на этой платформе. Просмотр групп работает без
-            изменений файлов.
+            Fingerprint и SHA-256 кешируются только для неизменившихся файлов.
+            Исчезнувшие и изменившиеся объекты исключаются при повторной
+            проверке.
           </p>
-        )}
-        <p className="hint">
-          Fingerprint и SHA-256 кешируются только для неизменившихся файлов.
-          Исчезнувшие и изменившиеся объекты исключаются при повторной проверке.
-        </p>
-      </section>
+        </section>
+      )}
     </section>
   );
 }
