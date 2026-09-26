@@ -1,0 +1,98 @@
+:root {
+  color-scheme: dark;
+
+  --font-family-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.8125rem;
+  --font-size-md: 0.9375rem;
+  --font-size-lg: 1.0625rem;
+  --font-size-xl: 1.375rem;
+  --font-weight-regular: 400;
+  --font-weight-medium: 550;
+  --font-weight-semibold: 650;
+  --font-weight-bold: 700;
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.5;
+
+  --color-background-base: #082e47;
+  --color-background-sidebar: #064a70;
+  --color-background-surface: #0c3652;
+  --color-background-elevated: #124867;
+  --color-background-subtle: #0a314b;
+  --color-background-overlay: rgb(2 18 29 / 72%);
+  --color-background-hover: rgb(255 255 255 / 10%);
+
+  --color-border-default: rgb(126 190 226 / 28%);
+  --color-border-strong: rgb(139 207 244 / 48%);
+  --color-border-focus: #66c2ff;
+
+  --color-text-primary: #f3f7fb;
+  --color-text-secondary: #b8ccda;
+  --color-text-muted: #91aabd;
+  --color-text-inverse: #06283d;
+  --color-text-disabled: #718a9c;
+
+  --color-accent-primary: #006bd6;
+  --color-accent-hover: #0068cf;
+  --color-accent-pressed: #005ebc;
+  --color-accent-selected: #006bd6;
+  --color-accent-subtle: rgb(10 132 255 / 18%);
+
+  --color-status-success: #31c48d;
+  --color-status-success-surface: rgb(49 196 141 / 14%);
+  --color-status-warning: #ffb020;
+  --color-status-warning-surface: rgb(255 176 32 / 14%);
+  --color-status-danger: #ff686d;
+  --color-status-danger-hover: #ff8084;
+  --color-status-danger-surface: rgb(255 90 95 / 14%);
+  --color-status-info: #66c2ff;
+  --color-status-info-surface: rgb(102 194 255 / 14%);
+
+  --color-visualization-1: #0a84ff;
+  --color-visualization-2: #00b7ff;
+  --color-visualization-3: #00d6c9;
+  --color-visualization-4: #31c48d;
+  --color-visualization-5: #b5e42e;
+  --color-visualization-6: #ffb020;
+  --color-visualization-surface: #bcdcf3;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-pill: 999px;
+
+  --border-width: 1px;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 22%);
+  --shadow-md: 0 12px 32px rgb(0 13 23 / 32%);
+  --shadow-focus: 0 0 0 3px rgb(102 194 255 / 32%);
+
+  --control-height-sm: 2rem;
+  --control-height-md: 2.5rem;
+  --control-height-lg: 3.5rem;
+  --row-height-compact: 2.5rem;
+  --row-height-comfortable: 3rem;
+  --sidebar-width: 17.5rem;
+  --sidebar-width-collapsed: 4.5rem;
+
+  --motion-fast: 150ms;
+  --motion-normal: 200ms;
+  --motion-easing: ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-normal: 0ms;
+  }
+}

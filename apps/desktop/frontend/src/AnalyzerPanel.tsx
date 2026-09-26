@@ -56,12 +56,12 @@ const VIRTUAL_ROW_HEIGHT = 92;
 const VIRTUAL_VIEWPORT_HEIGHT = 430;
 const VIRTUAL_OVERSCAN = 4;
 const SUNBURST_COLORS = [
-  "#486f4d",
-  "#63845c",
-  "#7d9b6a",
-  "#99af7d",
-  "#b0bd8c",
-  "#c7cba1",
+  "var(--color-visualization-1)",
+  "var(--color-visualization-2)",
+  "var(--color-visualization-3)",
+  "var(--color-visualization-4)",
+  "var(--color-visualization-5)",
+  "var(--color-visualization-6)",
 ];
 
 function sortFolderItems(items: IndexedEntry[], sort: FolderSort) {
