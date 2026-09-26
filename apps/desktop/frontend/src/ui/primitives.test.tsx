@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { Icon } from "./icons";
 import {
@@ -91,5 +91,45 @@ describe("UI primitives", () => {
     ).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("traps keyboard focus and returns it to the opener", async () => {
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <>
+        <button>Открыть проверку</button>
+        <DialogSurface onClose={onClose} open={false} title="Проверка">
+          <button>Первое действие</button>
+          <button>Последнее действие</button>
+        </DialogSurface>
+      </>,
+    );
+    const opener = screen.getByRole("button", { name: "Открыть проверку" });
+    opener.focus();
+    rerender(
+      <>
+        <button>Открыть проверку</button>
+        <DialogSurface onClose={onClose} open title="Проверка">
+          <button>Первое действие</button>
+          <button>Последнее действие</button>
+        </DialogSurface>
+      </>,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Закрыть" })).toHaveFocus(),
+    );
+    fireEvent.keyDown(window, { key: "Tab", shiftKey: true });
+    expect(
+      screen.getByRole("button", { name: "Последнее действие" }),
+    ).toHaveFocus();
+    rerender(
+      <>
+        <button>Открыть проверку</button>
+        <DialogSurface onClose={onClose} open={false} title="Проверка">
+          <button>Первое действие</button>
+        </DialogSurface>
+      </>,
+    );
+    expect(opener).toHaveFocus();
   });
 });

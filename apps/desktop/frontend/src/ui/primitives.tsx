@@ -255,6 +255,8 @@ export function DialogSurface({
 }) {
   const titleId = useId();
   const surfaceRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     if (!open) return;
     const previousFocus =
@@ -267,16 +269,39 @@ export function DialogSurface({
       );
       target?.focus();
     });
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+    const handleDialogKeyboard = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(
+        surfaceRef.current?.querySelectorAll<HTMLElement>(
+          "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex='-1'])",
+        ) ?? [],
+      );
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const current = focusable.indexOf(document.activeElement as HTMLElement);
+      const next = event.shiftKey
+        ? current <= 0
+          ? focusable.at(-1)
+          : focusable[current - 1]
+        : current < 0 || current === focusable.length - 1
+          ? focusable[0]
+          : focusable[current + 1];
+      event.preventDefault();
+      next?.focus();
     };
-    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("keydown", handleDialogKeyboard);
     return () => {
       cancelAnimationFrame(frame);
-      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("keydown", handleDialogKeyboard);
       previousFocus?.focus();
     };
-  }, [onClose, open]);
+  }, [open]);
   if (!open) return null;
   return (
     <div className="ui-dialog-backdrop">

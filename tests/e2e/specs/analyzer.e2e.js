@@ -1,3 +1,4 @@
+/* global document, HTMLElement, MouseEvent, MutationObserver, requestAnimationFrame */
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { browser, $, $$, expect } from "@wdio/globals";
@@ -7,6 +8,7 @@ const database = process.env.LOCAL_EXPERT_DISK_E2E_DB;
 const trash = process.env.LOCAL_EXPERT_DISK_E2E_TRASH;
 const phase = process.env.LOCAL_EXPERT_DISK_E2E_PHASE;
 const thresholdsPath = process.env.LOCAL_EXPERT_DISK_PERFORMANCE_THRESHOLDS;
+const evidenceDirectory = process.env.LOCAL_EXPERT_DISK_E2E_EVIDENCE_DIR;
 
 if (!root || !database || !trash || !phase || !thresholdsPath)
   throw new Error("E2E fixture environment is not configured");
@@ -16,6 +18,45 @@ async function waitForButton(name) {
   const element = await $(`button=${name}`);
   await element.waitForClickable();
   return element;
+}
+
+async function saveEvidence(name, focusSelector = null) {
+  if (!evidenceDirectory) return;
+  mkdirSync(evidenceDirectory, { recursive: true });
+  await browser.execute((selector) => {
+    document.scrollingElement?.scrollTo(0, 0);
+    document.querySelector(".app-sidebar")?.scrollTo(0, 0);
+    const workspace = document.querySelector(".app-workspace");
+    workspace?.scrollTo(0, 0);
+    if (selector)
+      document.querySelector(selector)?.scrollIntoView({ block: "start" });
+  }, focusSelector);
+  await browser.saveScreenshot(join(evidenceDirectory, name));
+}
+
+async function measureDomReaction(action, selector) {
+  return browser.executeAsync(
+    (actionName, resultSelector, done) => {
+      const started = performance.now();
+      const finish = () => done(performance.now() - started);
+      const observer = new MutationObserver(() => {
+        if (document.querySelector(resultSelector)) {
+          observer.disconnect();
+          requestAnimationFrame(finish);
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      const target = document.querySelector(actionName);
+      if (!(target instanceof HTMLElement)) {
+        observer.disconnect();
+        done(-1);
+        return;
+      }
+      target.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    },
+    action,
+    selector,
+  );
 }
 
 async function runScan(expectedState) {
@@ -30,6 +71,7 @@ async function runScan(expectedState) {
   await input.waitForEnabled();
   await input.setValue(root);
   await (await waitForButton("Использовать путь")).click();
+  await saveEvidence("01-selected-target.png");
   await (await waitForButton("Начать сканирование")).click();
   await browser.waitUntil(
     async () => {
@@ -73,6 +115,7 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
         expect.stringContaining("Local Expert Disk"),
       );
       await runScan("Сканирование завершено");
+      await saveEvidence("02-structure-result.png", ".structure-workspace");
 
       await (await waitForButton("Крупные файлы")).click();
       await (await waitForButton("Обновить выборку")).click();
@@ -82,6 +125,15 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
       );
       await (await waitForButton("Структура")).click();
 
+      const cachedDirectoryMs = await measureDomReaction(
+        '[role="option"][aria-label^="alpha,"]',
+        '[aria-label="Колонка каталога alpha"]',
+      );
+      expect(cachedDirectoryMs).toBeGreaterThanOrEqual(0);
+      expect(cachedDirectoryMs).toBeLessThanOrEqual(
+        thresholds.max_cached_directory_ms,
+      );
+      await (await waitForButton("Назад")).click();
       const alpha = await explorerRow("alpha");
       await alpha.$('input[type="checkbox"]').click();
       await expect($(".selection-action-bar")).toHaveText(
@@ -91,6 +143,7 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
       await expect($("[role='dialog']")).toHaveText(
         expect.stringContaining("alpha"),
       );
+      await saveEvidence("03-selection-review.png", ".structure-workspace");
       await (await waitForButton("Отмена")).click();
       await alpha.doubleClick();
       const deepMap = await $('[aria-label="Выбрать deep в Sunburst"]');

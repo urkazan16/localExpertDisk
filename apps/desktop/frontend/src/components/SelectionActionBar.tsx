@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { IndexedEntry } from "../api/generated";
+import type { IndexedEntry, Platform } from "../api/generated";
+import { revealActionLabel } from "../platformLabels";
 import { formatBytes } from "../ScanPanel";
 import { Button, DialogSurface } from "../ui/primitives";
 
@@ -9,6 +10,7 @@ export function SelectionActionBar({
   onOpen,
   onReveal,
   onTrash,
+  platform = null,
   selected,
   trashAvailable = false,
 }: {
@@ -17,6 +19,7 @@ export function SelectionActionBar({
   onOpen: (entry: IndexedEntry) => void;
   onReveal: (entry: IndexedEntry) => void;
   onTrash?: (entries: IndexedEntry[]) => Promise<void> | void;
+  platform?: Platform | null;
   selected: IndexedEntry[];
   trashAvailable?: boolean;
 }) {
@@ -56,7 +59,7 @@ export function SelectionActionBar({
             size="small"
             variant="secondary"
           >
-            Показать в системе
+            {revealActionLabel(platform)}
           </Button>
           {trashAvailable && onTrash && (
             <Button

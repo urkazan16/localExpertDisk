@@ -46,6 +46,8 @@ try {
       LOCAL_EXPERT_DISK_PERFORMANCE_THRESHOLDS: resolve(
         "benchmark-results/thresholds.json",
       ),
+      LOCAL_EXPERT_DISK_E2E_EVIDENCE_DIR:
+        process.env.LOCAL_EXPERT_DISK_E2E_EVIDENCE_DIR,
     };
     for (const phase of ["scan", "restart"]) {
       const status = run(

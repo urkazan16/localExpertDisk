@@ -169,7 +169,7 @@ describe("Old files UI", () => {
     render(<OldFilesPanel enabled scan={scan} />);
     expect(screen.getByRole("button", { name: "Открыть" })).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Показать в системе" }),
+      screen.getByRole("button", { name: "Показать в файловом менеджере" }),
     ).toBeDisabled();
     expect(
       screen.queryByRole("button", { name: "В корзину" }),

@@ -7,6 +7,7 @@ import {
   type IndexedEntry,
   type OldFileCriterion,
   type OldFilePage,
+  type Platform,
   type ScanSession,
 } from "./api/generated";
 import { errorMessage } from "./api/errors";
@@ -46,10 +47,12 @@ function dateLabel(value: string): string {
 
 export function OldFilesPanel({
   enabled,
+  platform = null,
   scan,
   trash = false,
 }: {
   enabled: boolean;
+  platform?: Platform | null;
   scan: ScanSession | null;
   trash?: boolean;
 }) {
@@ -343,6 +346,7 @@ export function OldFilesPanel({
             onOpen={(entry) => void actOnEntry(entry, "open")}
             onReveal={(entry) => void actOnEntry(entry, "reveal")}
             onTrash={() => trashSelected()}
+            platform={platform}
             selected={selected}
             trashAvailable={trash}
           />

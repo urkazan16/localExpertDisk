@@ -4,5 +4,9 @@
   "max_sqlite_bytes_per_entry": 512,
   "max_directory_map_duration_ms": 3000,
   "max_ipc_events_per_million_entries": 512,
-  "max_first_display_ms": 2000
+  "max_first_display_ms": 2000,
+  "max_cached_directory_ms": 150,
+  "max_selection_feedback_ms": 100,
+  "max_focus_feedback_ms": 50,
+  "max_search_first_page_ms": 300
 }

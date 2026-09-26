@@ -144,6 +144,7 @@ function Workspace() {
             )}
           <AnalyzerPanel
             enabled={enabled}
+            platform={controller.platform}
             scan={controller.scan.scan}
             trash={trash}
           />
@@ -155,6 +156,7 @@ function Workspace() {
         controller.view === "old-files" ? (
           <OldFilesPanel
             enabled={enabled}
+            platform={controller.platform}
             scan={controller.scan.scan}
             trash={trash}
           />

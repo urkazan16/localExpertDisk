@@ -7,6 +7,7 @@ import {
   type FileCategory,
   type FileSort,
   type IndexedEntry,
+  type Platform,
   type ScanSession,
 } from "./api/generated";
 import { formatBytes } from "./ScanPanel";
@@ -18,6 +19,7 @@ import {
 import { useAnalyzerController } from "./state/useAnalyzerController";
 import { ColumnBrowser } from "./components/ColumnBrowser";
 import { SelectionActionBar } from "./components/SelectionActionBar";
+import { revealActionLabel } from "./platformLabels";
 import { InlineAlert, SegmentedControl } from "./ui/primitives";
 
 const kindLabels = {
@@ -57,11 +59,18 @@ function colorForKey(key: string) {
   return SUNBURST_COLORS[(hash >>> 0) % SUNBURST_COLORS.length];
 }
 
+function compactVisualizationLabel(name: string | undefined, path: string) {
+  const candidate = name?.trim() || path;
+  const source = candidate.split(/[\\/]/).filter(Boolean).at(-1) || candidate;
+  return source.length > 18 ? `${source.slice(0, 15)}…` : source;
+}
+
 function EntryRowContent({
   entry,
   onDirectory,
   onAction,
   onTrash,
+  platform,
   selected,
   onToggle,
 }: {
@@ -69,6 +78,7 @@ function EntryRowContent({
   onDirectory?: (entry: IndexedEntry) => void;
   onAction?: (entry: IndexedEntry, action: "open" | "reveal") => void;
   onTrash?: (entry: IndexedEntry) => void;
+  platform: Platform | null;
   selected?: Set<string>;
   onToggle?: (entry: IndexedEntry) => void;
 }) {
@@ -103,7 +113,7 @@ function EntryRowContent({
             className="secondary"
             onClick={() => onAction(entry, "reveal")}
           >
-            Показать в системе
+            {revealActionLabel(platform)}
           </button>
         </div>
       )}
@@ -121,6 +131,7 @@ function EntryRows({
   onDirectory,
   onAction,
   onTrash,
+  platform,
   selected,
   onToggle,
 }: {
@@ -128,6 +139,7 @@ function EntryRows({
   onDirectory?: (entry: IndexedEntry) => void;
   onAction?: (entry: IndexedEntry, action: "open" | "reveal") => void;
   onTrash?: (entry: IndexedEntry) => void;
+  platform: Platform | null;
   selected?: Set<string>;
   onToggle?: (entry: IndexedEntry) => void;
 }) {
@@ -141,6 +153,7 @@ function EntryRows({
       onDirectory={onDirectory}
       onAction={onAction}
       onTrash={onTrash}
+      platform={platform}
       selected={selected}
       onToggle={onToggle}
     />
@@ -532,7 +545,10 @@ function DirectoryVisualization({
               );
             })}
             <text x="160" y="154" textAnchor="middle">
-              {directory?.name || directory?.path}
+              {compactVisualizationLabel(
+                directory?.name,
+                directory?.path ?? "",
+              )}
             </text>
             <text x="160" y="176" textAnchor="middle" className="sunburst-size">
               {formatBytes(map.root.size)}
@@ -655,10 +671,12 @@ function DiskOverview({
 
 export function AnalyzerPanel({
   enabled,
+  platform = null,
   scan,
   trash = false,
 }: {
   enabled: boolean;
+  platform?: Platform | null;
   scan: ScanSession | null;
   trash?: boolean;
 }) {
@@ -955,6 +973,7 @@ export function AnalyzerPanel({
                 <EntryRows
                   items={largeFiles.items}
                   onToggle={controller.toggleSelection}
+                  platform={platform}
                   selected={new Set(selected.map((entry) => entry.id))}
                 />
               ) : (
@@ -1024,6 +1043,7 @@ export function AnalyzerPanel({
                   <EntryRows
                     items={categoryFiles.items}
                     onToggle={controller.toggleSelection}
+                    platform={platform}
                     selected={new Set(selected.map((entry) => entry.id))}
                   />
                   {categoryFiles.next_cursor && (
@@ -1068,6 +1088,7 @@ export function AnalyzerPanel({
                 <EntryRows
                   items={search.items}
                   onToggle={controller.toggleSelection}
+                  platform={platform}
                   selected={new Set(selected.map((entry) => entry.id))}
                 />
               ) : (
@@ -1116,6 +1137,7 @@ export function AnalyzerPanel({
             onOpen={(entry) => void controller.actOnEntry(entry, "open")}
             onReveal={(entry) => void controller.actOnEntry(entry, "reveal")}
             onTrash={() => trashSelected()}
+            platform={platform}
             selected={selected}
             trashAvailable={trash}
           />

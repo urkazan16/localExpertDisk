@@ -488,53 +488,63 @@ describe("Analyzer UI", () => {
     );
   });
 
-  it("keeps a 100K directory payload bounded and renders its first viewport promptly", async () => {
-    const hugeScan = { ...scan, files_count: "100001", logical_size: "100001" };
-    vi.mocked(getChildren).mockResolvedValue({
-      items: Array.from({ length: 100 }, (_, index) => ({
-        id: String(1000 + index),
-        parent_id: "8",
-        name: `wide-${index}`,
-        path: `/fixture/wide-${index}`,
-        kind: "file" as const,
-        logical_size: "1",
-        aggregate_size: "1",
-      })),
-      next_cursor: "1099",
-    });
-    vi.mocked(getDirectoryMap).mockResolvedValue({
-      metric: "logical",
-      root: {
-        entry: root,
-        size: "100001",
-        children: Array.from({ length: 8 }, (_, index) => ({
-          entry: {
-            id: String(2000 + index),
-            parent_id: "8",
-            name: `largest-${index}`,
-            path: `/fixture/largest-${index}`,
-            kind: "file" as const,
-            logical_size: "1",
-            aggregate_size: "1",
-          },
-          size: "1",
-          children: [],
-          remainder: null,
+  it.each(["100000", "500000", "1000000"])(
+    "keeps a %s-entry indexed scenario bounded in the frontend",
+    async (filesCount) => {
+      const hugeScan = {
+        ...scan,
+        files_count: filesCount,
+        logical_size: filesCount,
+      };
+      vi.mocked(getChildren).mockResolvedValue({
+        items: Array.from({ length: 100 }, (_, index) => ({
+          id: String(1000 + index),
+          parent_id: "8",
+          name: `wide-${index}`,
+          path: `/fixture/wide-${index}`,
+          kind: "file" as const,
+          logical_size: "1",
+          aggregate_size: "1",
         })),
-        remainder: { objects_count: "99993", size: "99993" },
-      },
-    });
-    const started = performance.now();
-    render(<AnalyzerPanel enabled scan={hugeScan} />);
-    expect(
-      await screen.findByRole("list", { name: "Легенда Sunburst" }),
-    ).toHaveTextContent("Остальное (99993)");
-    expect(performance.now() - started).toBeLessThan(2_000);
-    const list = screen.getByRole("listbox", {
-      name: "Содержимое каталога fixture",
-    });
-    expect(within(list).getAllByRole("option").length).toBeLessThan(30);
-  });
+        next_cursor: "1099",
+      });
+      vi.mocked(getDirectoryMap).mockResolvedValue({
+        metric: "logical",
+        root: {
+          entry: root,
+          size: filesCount,
+          children: Array.from({ length: 8 }, (_, index) => ({
+            entry: {
+              id: String(2000 + index),
+              parent_id: "8",
+              name: `largest-${index}`,
+              path: `/fixture/largest-${index}`,
+              kind: "file" as const,
+              logical_size: "1",
+              aggregate_size: "1",
+            },
+            size: "1",
+            children: [],
+            remainder: null,
+          })),
+          remainder: {
+            objects_count: (BigInt(filesCount) - 8n).toString(),
+            size: (BigInt(filesCount) - 8n).toString(),
+          },
+        },
+      });
+      const started = performance.now();
+      render(<AnalyzerPanel enabled scan={hugeScan} />);
+      expect(
+        await screen.findByRole("list", { name: "Легенда Sunburst" }),
+      ).toHaveTextContent(`Остальное (${BigInt(filesCount) - 8n})`);
+      expect(performance.now() - started).toBeLessThan(2_000);
+      const list = screen.getByRole("listbox", {
+        name: "Содержимое каталога fixture",
+      });
+      expect(within(list).getAllByRole("option").length).toBeLessThan(30);
+    },
+  );
 
   it("renders a disk overview and opens a category from the treemap", async () => {
     vi.mocked(getCategories).mockResolvedValue([
@@ -958,11 +968,11 @@ describe("Analyzer UI", () => {
   it("uses the indexed entry identifier for system actions", async () => {
     vi.mocked(openEntry).mockResolvedValue();
     vi.mocked(revealEntry).mockResolvedValue();
-    render(<AnalyzerPanel enabled scan={scan} />);
+    render(<AnalyzerPanel enabled platform="macos" scan={scan} />);
     fireEvent.click(await findExplorerOption("nested"));
     fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
     await waitFor(() => expect(openEntry).toHaveBeenCalledWith("7", "9"));
-    fireEvent.click(screen.getByRole("button", { name: "Показать в системе" }));
+    fireEvent.click(screen.getByRole("button", { name: "Показать в Finder" }));
     await waitFor(() => expect(revealEntry).toHaveBeenCalledWith("7", "9"));
   });
 
