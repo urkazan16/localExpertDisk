@@ -539,7 +539,7 @@ fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
 }
 fn main() {
     tracing_subscriber::fmt().json().with_target(false).init();
-    let builder = register_commands(tauri::Builder::default());
+    let builder = register_commands(tauri::Builder::default().plugin(tauri_plugin_dialog::init()));
     #[cfg(feature = "e2e")]
     let builder = builder
         .plugin(tauri_plugin_wdio::init())

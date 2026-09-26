@@ -21,7 +21,14 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'",
+      "capabilities": [
+        {
+          "identifier": "desktop-main",
+          "windows": ["main"],
+          "permissions": ["core:default", "dialog:allow-open"]
+        }
+      ]
     }
   },
   "bundle": {

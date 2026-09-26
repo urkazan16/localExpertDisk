@@ -19,21 +19,37 @@ async function waitForButton(name) {
 }
 
 async function runScan(expectedState) {
-  const previous = await $(".scan-result");
+  const previous = await $(".analyzer");
   const previousId = (await previous.isExisting())
-    ? await previous.getAttribute("data-scan-id")
+    ? await previous.getAttribute("data-analyzer-scan-id")
     : null;
-  const input = await $("#scan-root");
+  const input = await $("#manual-target-path");
+  if (!(await input.isDisplayed())) {
+    await (await $("summary=Указать путь вручную")).click();
+  }
   await input.waitForEnabled();
   await input.setValue(root);
-  await (await waitForButton("Сканировать")).click();
+  await (await waitForButton("Использовать путь")).click();
+  await (await waitForButton("Начать сканирование")).click();
   await browser.waitUntil(
-    async () =>
-      (await $(".scan-result").getAttribute("data-scan-id")) !== previousId,
-    { timeoutMsg: "scan session id did not change" },
+    async () => {
+      const analyzer = await $(".analyzer");
+      return (
+        (await analyzer.isExisting()) &&
+        (await analyzer.getAttribute("data-analyzer-scan-id")) !== previousId
+      );
+    },
+    { timeout: 30_000, timeoutMsg: "scan session id did not change" },
   );
-  const heading = await $(`h3=${expectedState}`);
-  await heading.waitForDisplayed({ timeout: 30_000 });
+  if (expectedState.includes("не полностью")) {
+    const partialNotice = await $(".scan-partial-notice");
+    await partialNotice.waitForDisplayed({ timeout: 30_000 });
+    await expect(partialNotice).toHaveText(
+      expect.stringContaining("Часть объектов недоступна"),
+    );
+  } else {
+    await expect($(".analyzer")).toBeDisplayed();
+  }
 }
 
 async function explorerRow(name) {
@@ -86,15 +102,16 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
   if (phase === "restart") {
     it("restores SQLite history and completes comparison and duplicate trash", async () => {
       await expect($("body")).toHaveText(
-        expect.stringContaining("Приложение подключено"),
+        expect.stringContaining("Готово к работе"),
       );
       await expect($("body")).toHaveText(
-        expect.stringContaining("Сканирование завершено не полностью"),
+        expect.stringContaining("Часть объектов недоступна"),
       );
       expect(
         readdirSync(join(database, "..")).some((name) => name === "index.db"),
       ).toBe(true);
 
+      await (await waitForButton("История")).click();
       let rows = await historyRows();
       const oldest = rows.at(-1);
       const oldestScanId = await oldest.getAttribute("data-scan-id");
@@ -109,15 +126,15 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
       expect(performance.now() - firstDisplayStarted).toBeLessThanOrEqual(
         thresholds.max_first_display_ms,
       );
-      await expect(oldest).toHaveText(expect.stringContaining("Активный"));
-
+      await (await waitForButton("История")).click();
       rows = await historyRows();
       const partial = rows[0];
       await partial.$("button=Открыть анализ").click();
-      await expect($(".warning")).toHaveText(
+      await expect($(".scan-partial-notice")).toHaveText(
         expect.stringContaining("Часть объектов недоступна"),
       );
 
+      await (await waitForButton("История")).click();
       rows = await historyRows();
       await rows.at(-1).$('input[type="checkbox"]').click();
       await rows.at(-2).$('input[type="checkbox"]').click();

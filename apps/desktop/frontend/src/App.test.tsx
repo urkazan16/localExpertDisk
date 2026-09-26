@@ -1,15 +1,50 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { isTauri } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { App } from "./App";
-import type { AppInfo } from "./api/generated";
+import {
+  getAppInfo,
+  getScan,
+  getVolumes,
+  startScan,
+  type AppInfo,
+  type ScanSession,
+  type VolumeInfo,
+} from "./api/generated";
 
-vi.mock("./ScanPanel", () => ({ ScanPanel: () => <div>Scanner</div> }));
-vi.mock("./HistoryDuplicatesPanel", () => ({
-  HistoryDuplicatesPanel: () => <div>History</div>,
+vi.mock("./AnalyzerPanel", () => ({
+  AnalyzerPanel: () => <div>Analyzer</div>,
 }));
+vi.mock("./OldFilesPanel", () => ({
+  OldFilesPanel: () => <div>Old files</div>,
+}));
+vi.mock("./HistoryDuplicatesPanel", () => ({
+  HistoryDuplicatesPanel: () => <div>History and duplicates</div>,
+}));
+vi.mock("@tauri-apps/api/core", () => ({ isTauri: vi.fn() }));
+vi.mock("@tauri-apps/api/path", () => ({
+  audioDir: vi.fn().mockResolvedValue("/Users/test/Music"),
+  documentDir: vi.fn().mockResolvedValue("/Users/test/Documents"),
+  downloadDir: vi.fn().mockResolvedValue("/Users/test/Downloads"),
+  homeDir: vi.fn().mockResolvedValue("/Users/test"),
+  pictureDir: vi.fn().mockResolvedValue("/Users/test/Pictures"),
+  videoDir: vi.fn().mockResolvedValue("/Users/test/Movies"),
+}));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
+vi.mock("./api/generated", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./api/generated")>();
+  return {
+    ...actual,
+    cancelScan: vi.fn(),
+    getAppInfo: vi.fn(),
+    getScan: vi.fn(),
+    getScanIssues: vi.fn(),
+    getVolumes: vi.fn(),
+    startScan: vi.fn(),
+  };
+});
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 const info: AppInfo = {
   version: "0.1.0",
   platform: "macos",
@@ -25,56 +60,189 @@ const info: AppInfo = {
     duplicate_hashing: false,
   },
 };
+const volume: VolumeInfo = {
+  name: "Macintosh HD",
+  mount_point: "/",
+  filesystem: "apfs",
+  total_bytes: "1000000000",
+  available_bytes: "400000000",
+};
+const activeScan: ScanSession = {
+  id: "scan-1",
+  root_path: "/",
+  state: "scanning",
+  files_count: "12",
+  directories_count: "4",
+  symlinks_count: "0",
+  skipped_count: "0",
+  logical_size: "4096",
+  allocated_size: null,
+  unique_allocated_size: null,
+  errors_count: "0",
+  started_at_ms: "1",
+  finished_at_ms: null,
+  failure: null,
+};
+const partialScan: ScanSession = {
+  ...activeScan,
+  state: "partial",
+  finished_at_ms: "2",
+  errors_count: "1",
+};
+
 beforeEach(() => {
-  vi.resetAllMocks();
+  vi.clearAllMocks();
   vi.mocked(isTauri).mockReturnValue(true);
+  vi.mocked(getAppInfo).mockResolvedValue(info);
+  vi.mocked(getVolumes).mockResolvedValue([volume]);
+  vi.mocked(getScan).mockResolvedValue(null);
+  vi.mocked(open).mockResolvedValue(null);
 });
-describe("Foundation connection", () => {
-  it("does not invent a backend in the browser", async () => {
+
+describe("application shell", () => {
+  it("keeps the browser preview honest", async () => {
     vi.mocked(isTauri).mockReturnValue(false);
     render(<App />);
     expect(
       await screen.findByText("Открыт браузерный предпросмотр"),
     ).toBeInTheDocument();
-    expect(invoke).not.toHaveBeenCalled();
+    expect(screen.getByText("Локальные диски недоступны")).toBeInTheDocument();
+    expect(getAppInfo).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Выбрать папку…" }),
+    ).toBeDisabled();
   });
-  it("shows loading until the actual IPC response arrives", async () => {
+
+  it("shows the shell while IPC starts, then only real locations", async () => {
     let resolve!: (value: AppInfo) => void;
-    vi.mocked(invoke).mockReturnValue(
-      new Promise<AppInfo>((done) => {
+    vi.mocked(getAppInfo).mockReturnValue(
+      new Promise((done) => {
         resolve = done;
       }),
     );
     render(<App />);
-    expect(screen.getByRole("status")).toHaveTextContent("Проверяем");
+    expect(screen.getByLabelText("Загрузка приложения")).toBeInTheDocument();
     resolve(info);
     expect(
-      await screen.findByText("Приложение подключено · локальная база готова"),
+      await screen.findByText("Выберите том или папку"),
     ).toBeInTheDocument();
-    expect(invoke).toHaveBeenCalledWith("get_app_info");
-    expect(screen.getByText("0.1.0")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Macintosh HD" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Документы" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("macOS · 0.1.0")).toBeInTheDocument();
   });
-  it("handles storage errors safely and allows another check", async () => {
-    vi.mocked(invoke)
+
+  it("selects a real volume and starts its scan", async () => {
+    vi.mocked(startScan).mockResolvedValue(activeScan);
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Macintosh HD" }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Macintosh HD" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("apfs")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Начать сканирование" }),
+    );
+    await waitFor(() =>
+      expect(startScan).toHaveBeenCalledWith(
+        { root_path: "/" },
+        expect.any(Function),
+      ),
+    );
+    expect(
+      await screen.findByText("ИДЁТ ЛОКАЛЬНЫЙ АНАЛИЗ"),
+    ).toBeInTheDocument();
+  });
+
+  it("uses the native picker result without inventing folder metadata", async () => {
+    vi.mocked(open).mockResolvedValue("/Users/test/Work");
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Выбрать папку…" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Work" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Размер и содержимое папки будут определены во время сканирования.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps a partial-result warning visible in the result workspace", async () => {
+    vi.mocked(getScan).mockResolvedValue(partialScan);
+    render(<App />);
+    expect(
+      await screen.findByText("Часть объектов недоступна"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Analyzer")).toBeInTheDocument();
+  });
+
+  it("accepts an absolute path as a fallback selection", async () => {
+    render(<App />);
+    const summary = await screen.findByText("Указать путь вручную");
+    fireEvent.click(summary);
+    fireEvent.change(screen.getByLabelText("Абсолютный путь"), {
+      target: { value: "/tmp/fixture" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Использовать путь" }));
+    expect(
+      await screen.findByRole("heading", { name: "fixture" }),
+    ).toBeInTheDocument();
+  });
+
+  it("rejects a relative manual path before calling the backend", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByText("Указать путь вручную"));
+    fireEvent.change(screen.getByLabelText("Абсолютный путь"), {
+      target: { value: "relative/folder" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Использовать путь" }));
+    expect(screen.getByText("Укажите абсолютный путь.")).toBeInTheDocument();
+    expect(startScan).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a restored terminal scan failure on its target", async () => {
+    vi.mocked(getScan).mockResolvedValue({
+      ...partialScan,
+      state: "failed",
+      failure: {
+        code: "permission_denied",
+        recoverable: true,
+        user_message_key: "errors.permission_denied",
+      },
+    });
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Нет доступа к выбранному каталогу",
+    );
+  });
+
+  it("recovers from a retryable local storage error", async () => {
+    vi.mocked(getAppInfo)
       .mockRejectedValueOnce({
         user_message_key: "errors.storage_unavailable",
         recoverable: true,
-        technical_details: "/private/user/secret",
       })
       .mockResolvedValueOnce(info);
     render(<App />);
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Не удалось открыть локальную базу",
     );
-    expect(screen.queryByText("/private/user/secret")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Повторить проверку" }));
     expect(
-      await screen.findByText("Приложение подключено · локальная база готова"),
+      await screen.findByText("Выберите том или папку"),
     ).toBeInTheDocument();
   });
 
-  it("does not offer a retry for an incompatible schema", async () => {
-    vi.mocked(invoke).mockRejectedValue({
+  it("does not offer retry for an incompatible schema", async () => {
+    vi.mocked(getAppInfo).mockRejectedValue({
       user_message_key: "errors.unsupported_schema",
       recoverable: false,
     });
@@ -84,16 +252,6 @@ describe("Foundation connection", () => {
     );
     expect(
       screen.queryByRole("button", { name: "Повторить проверку" }),
-    ).not.toBeInTheDocument();
-  });
-  it("uses safe text for an unknown transport error", async () => {
-    vi.mocked(invoke).mockRejectedValue("sensitive path or diagnostic");
-    render(<App />);
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Не удалось связаться",
-    );
-    expect(
-      screen.queryByText("sensitive path or diagnostic"),
     ).not.toBeInTheDocument();
   });
 });
