@@ -80,13 +80,14 @@ cargo run -p fixture-generator -- /tmp/local-expert-disk-p1m \
 
 ## Документы
 
-- Исходная спецификация реализации — файл `IMPLEMENTATION_PLAN … .md` в корне (сохранён без изменений).
+- [Спецификация реализации](docs/implementation/IMPLEMENTATION_PLAN.md).
+- [Функциональные требования](docs/requirements/SRS.md).
 - [Фактическая архитектура](docs/architecture/ARCHITECTURE.md).
 - [Rust/Tauri и зависимости](docs/adr/0001-rust-tauri-foundation.md).
 - [Генерация IPC](docs/adr/0002-ipc-contracts.md).
 - [Первый scanner](docs/adr/0003-scanner-pipeline.md).
 - [Состояние этапов и ограничения](docs/roadmap/STAGES.md).
 
-SRS, перечисленный в исходном плане, не предоставлен. Нельзя считать требования
-SCAN-* и остальные примерные ID утверждёнными. Foundation связан с IMP-0-001…012;
-полная requirement traceability и release gates остаются открытыми.
+SRS определяет функциональные требования, Implementation Plan — способ реализации,
+а `docs/roadmap/STAGES.md` — фактический статус. Полная requirement traceability и
+кроссплатформенные release gates остаются отдельными задачами.

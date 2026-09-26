@@ -1,0 +1,45 @@
+{
+  "generated_at": "2026-09-26T22:25:02.392Z",
+  "platform": "darwin",
+  "architecture": "x64",
+  "build_mode": "debug-e2e",
+  "fixture": "tests/e2e/run.mjs synthetic fixture",
+  "metrics": {
+    "search_first_page_ms": {
+      "value": 19,
+      "limit": 300,
+      "unit": "ms",
+      "passed": true
+    },
+    "interaction_fps": {
+      "value": 59.99,
+      "minimum": 30,
+      "unit": "fps",
+      "passed": true
+    },
+    "cached_directory_ms": {
+      "value": 8,
+      "limit": 150,
+      "unit": "ms",
+      "passed": true
+    },
+    "selection_feedback_ms": {
+      "value": 39,
+      "limit": 100,
+      "unit": "ms",
+      "passed": true
+    },
+    "focus_feedback_ms": {
+      "value": 5,
+      "limit": 50,
+      "unit": "ms",
+      "passed": true
+    },
+    "first_display_ms": {
+      "value": 118.7,
+      "limit": 2000,
+      "unit": "ms",
+      "passed": true
+    }
+  }
+}

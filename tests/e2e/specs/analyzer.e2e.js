@@ -1,6 +1,7 @@
-/* global document, HTMLElement, MouseEvent, MutationObserver, requestAnimationFrame */
+/* global clearTimeout, document, HTMLElement, MouseEvent, MutationObserver, requestAnimationFrame, setTimeout, window */
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { arch, platform } from "node:os";
+import { dirname, join } from "node:path";
 import { browser, $, $$, expect } from "@wdio/globals";
 
 const root = process.env.LOCAL_EXPERT_DISK_E2E_ROOT;
@@ -9,10 +10,70 @@ const trash = process.env.LOCAL_EXPERT_DISK_E2E_TRASH;
 const phase = process.env.LOCAL_EXPERT_DISK_E2E_PHASE;
 const thresholdsPath = process.env.LOCAL_EXPERT_DISK_PERFORMANCE_THRESHOLDS;
 const evidenceDirectory = process.env.LOCAL_EXPERT_DISK_E2E_EVIDENCE_DIR;
+const performanceReport = process.env.LOCAL_EXPERT_DISK_UI_PERFORMANCE_REPORT;
 
 if (!root || !database || !trash || !phase || !thresholdsPath)
   throw new Error("E2E fixture environment is not configured");
 const thresholds = JSON.parse(readFileSync(thresholdsPath, "utf8"));
+
+function newPerformanceReport() {
+  return {
+    generated_at: new Date().toISOString(),
+    platform: platform(),
+    architecture: arch(),
+    build_mode: "debug-e2e",
+    fixture: "tests/e2e/run.mjs synthetic fixture",
+    metrics: {},
+  };
+}
+
+function initializePerformanceReport() {
+  if (!performanceReport) return;
+  mkdirSync(dirname(performanceReport), { recursive: true });
+  writeFileSync(
+    performanceReport,
+    `${JSON.stringify(newPerformanceReport(), null, 2)}\n`,
+  );
+}
+
+function recordPerformance(name, value, limit, unit = "ms") {
+  if (!performanceReport) return;
+  let report = newPerformanceReport();
+  try {
+    report = JSON.parse(readFileSync(performanceReport, "utf8"));
+  } catch {
+    mkdirSync(dirname(performanceReport), { recursive: true });
+  }
+  report.generated_at = new Date().toISOString();
+  const measured = Math.round(value * 100) / 100;
+  report.metrics[name] = {
+    value: measured,
+    limit,
+    unit,
+    passed: measured <= limit,
+  };
+  writeFileSync(performanceReport, `${JSON.stringify(report, null, 2)}\n`);
+}
+
+function recordMinimumPerformance(name, value, minimum, unit) {
+  if (!performanceReport) return;
+  let report;
+  try {
+    report = JSON.parse(readFileSync(performanceReport, "utf8"));
+  } catch {
+    mkdirSync(dirname(performanceReport), { recursive: true });
+    report = newPerformanceReport();
+  }
+  report.generated_at = new Date().toISOString();
+  const measured = Math.round(value * 100) / 100;
+  report.metrics[name] = {
+    value: measured,
+    minimum,
+    unit,
+    passed: measured >= minimum,
+  };
+  writeFileSync(performanceReport, `${JSON.stringify(report, null, 2)}\n`);
+}
 
 async function waitForButton(name) {
   const element = await $(`button=${name}`);
@@ -38,18 +99,25 @@ async function measureDomReaction(action, selector) {
   return browser.executeAsync(
     (actionName, resultSelector, done) => {
       const started = performance.now();
-      const finish = () => done(performance.now() - started);
+      let finished = false;
+      const timeout = setTimeout(() => finish(-2), 10_000);
+      const finish = (value = performance.now() - started) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeout);
+        done(value);
+      };
       const observer = new MutationObserver(() => {
         if (document.querySelector(resultSelector)) {
           observer.disconnect();
-          requestAnimationFrame(finish);
+          requestAnimationFrame(() => finish());
         }
       });
       observer.observe(document.body, { childList: true, subtree: true });
       const target = document.querySelector(actionName);
       if (!(target instanceof HTMLElement)) {
         observer.disconnect();
-        done(-1);
+        finish(-1);
         return;
       }
       target.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
@@ -57,6 +125,136 @@ async function measureDomReaction(action, selector) {
     action,
     selector,
   );
+}
+
+async function measureWebdriverClickReaction(action, selector, expectedText) {
+  const key = `${Date.now()}-${Math.random()}`;
+  await browser.execute(
+    (metricKey, resultSelector, text) => {
+      window.__localExpertPerformance ??= {};
+      const started = performance.now();
+      let finished = false;
+      const observer = new MutationObserver(check);
+      const timeout = setTimeout(() => finish(-2), 10_000);
+      function finish(value = performance.now() - started) {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeout);
+        observer.disconnect();
+        window.__localExpertPerformance[metricKey] = value;
+      }
+      function check() {
+        const result = document.querySelector(resultSelector);
+        if (finished || !result?.textContent?.includes(text)) return;
+        requestAnimationFrame(() => finish());
+      }
+      window.__localExpertPerformance[metricKey] = null;
+      observer.observe(document.body, {
+        attributes: true,
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+      check();
+    },
+    key,
+    selector,
+    expectedText,
+  );
+  await action.click();
+  await browser.waitUntil(
+    async () =>
+      typeof (await browser.execute(
+        (metricKey) => window.__localExpertPerformance?.[metricKey],
+        key,
+      )) === "number",
+    { timeout: 11_000, timeoutMsg: `No DOM reaction for ${selector}` },
+  );
+  return browser.execute(
+    (metricKey) => window.__localExpertPerformance[metricKey],
+    key,
+  );
+}
+
+async function measureFormSubmitReaction(formSelector, selector, expectedText) {
+  return browser.executeAsync(
+    (targetSelector, resultSelector, text, done) => {
+      const form = document.querySelector(targetSelector);
+      if (!form || typeof form.requestSubmit !== "function") {
+        done(-1);
+        return;
+      }
+      const started = performance.now();
+      let finished = false;
+      const observer = new MutationObserver(check);
+      const timeout = setTimeout(() => finish(-2), 10_000);
+      function finish(value = performance.now() - started) {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeout);
+        observer.disconnect();
+        done(value);
+      }
+      function check() {
+        const result = document.querySelector(resultSelector);
+        if (finished || !result?.textContent?.includes(text)) return;
+        requestAnimationFrame(() => finish());
+      }
+      observer.observe(document.body, {
+        attributes: true,
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+      form.requestSubmit();
+      check();
+    },
+    formSelector,
+    selector,
+    expectedText,
+  );
+}
+
+async function measureFocusFeedback(selector) {
+  return browser.executeAsync((targetSelector, done) => {
+    const target = document.querySelector(targetSelector);
+    if (!target || typeof target.focus !== "function") {
+      done(-1);
+      return;
+    }
+    const started = performance.now();
+    target.focus();
+    requestAnimationFrame(() =>
+      done(
+        document.activeElement === target ? performance.now() - started : -1,
+      ),
+    );
+  }, selector);
+}
+
+async function measureInteractionFps(durationMs) {
+  return browser.executeAsync((duration, done) => {
+    const scroller = document.querySelector(".column-browser");
+    const segment = document.querySelector(".sunburst-segment");
+    const started = performance.now();
+    let frames = 0;
+    let active = true;
+    function frame() {
+      if (!active) return;
+      frames += 1;
+      if (scroller instanceof HTMLElement)
+        scroller.scrollLeft = frames % 2 ? scroller.scrollWidth : 0;
+      if (segment instanceof HTMLElement)
+        segment.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+    setTimeout(() => {
+      active = false;
+      const elapsed = performance.now() - started;
+      done(elapsed > 0 ? (frames * 1000) / elapsed : 0);
+    }, duration);
+  }, durationMs);
 }
 
 async function runScan(expectedState) {
@@ -111,6 +309,7 @@ async function historyRows() {
 describe(`desktop analyzer workflow: ${phase}`, () => {
   if (phase === "scan") {
     it("runs synthetic scans and keeps map navigation synchronized", async () => {
+      initializePerformanceReport();
       await expect($("body")).toHaveText(
         expect.stringContaining("Local Expert Disk"),
       );
@@ -123,7 +322,37 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
       await expect($("body")).toHaveText(
         expect.stringContaining("Обзор диска"),
       );
+      await (await waitForButton("Поиск")).click();
+      await $("#entry-search").setValue("alpha");
+      await waitForButton("Найти");
+      const searchFirstPageMs = await measureFormSubmitReaction(
+        ".analyzer-header-search",
+        "body",
+        "alpha",
+      );
+      expect(searchFirstPageMs).toBeGreaterThanOrEqual(0);
+      expect(searchFirstPageMs).toBeLessThanOrEqual(
+        thresholds.max_search_first_page_ms,
+      );
+      recordPerformance(
+        "search_first_page_ms",
+        searchFirstPageMs,
+        thresholds.max_search_first_page_ms,
+      );
       await (await waitForButton("Структура")).click();
+
+      const interactionFps = await measureInteractionFps(
+        thresholds.interaction_profile_duration_ms,
+      );
+      expect(interactionFps).toBeGreaterThanOrEqual(
+        thresholds.min_interaction_fps,
+      );
+      recordMinimumPerformance(
+        "interaction_fps",
+        interactionFps,
+        thresholds.min_interaction_fps,
+        "fps",
+      );
 
       const cachedDirectoryMs = await measureDomReaction(
         '[role="option"][aria-label^="alpha,"]',
@@ -133,9 +362,27 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
       expect(cachedDirectoryMs).toBeLessThanOrEqual(
         thresholds.max_cached_directory_ms,
       );
+      recordPerformance(
+        "cached_directory_ms",
+        cachedDirectoryMs,
+        thresholds.max_cached_directory_ms,
+      );
       await (await waitForButton("Назад")).click();
-      const alpha = await explorerRow("alpha");
-      await alpha.$('input[type="checkbox"]').click();
+      let alpha = await explorerRow("alpha");
+      const selectionFeedbackMs = await measureWebdriverClickReaction(
+        await alpha.$('input[type="checkbox"]'),
+        ".selection-action-bar",
+        "Выбрано: 1",
+      );
+      expect(selectionFeedbackMs).toBeGreaterThanOrEqual(0);
+      expect(selectionFeedbackMs).toBeLessThanOrEqual(
+        thresholds.max_selection_feedback_ms,
+      );
+      recordPerformance(
+        "selection_feedback_ms",
+        selectionFeedbackMs,
+        thresholds.max_selection_feedback_ms,
+      );
       await expect($(".selection-action-bar")).toHaveText(
         expect.stringContaining("Выбрано: 1"),
       );
@@ -143,13 +390,26 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
       await expect($("[role='dialog']")).toHaveText(
         expect.stringContaining("alpha"),
       );
-      await saveEvidence("03-selection-review.png", ".structure-workspace");
+      await saveEvidence("04-selection-review.png", ".structure-workspace");
       await (await waitForButton("Отмена")).click();
+      alpha = await explorerRow("alpha");
       await alpha.doubleClick();
       const deepMap = await $('[aria-label="Выбрать deep в Sunburst"]');
       await deepMap.waitForDisplayed();
-      await browser.execute((element) => element.focus(), deepMap);
+      const focusFeedbackMs = await measureFocusFeedback(
+        '[aria-label="Выбрать deep в Sunburst"]',
+      );
+      expect(focusFeedbackMs).toBeGreaterThanOrEqual(0);
+      expect(focusFeedbackMs).toBeLessThanOrEqual(
+        thresholds.max_focus_feedback_ms,
+      );
+      recordPerformance(
+        "focus_feedback_ms",
+        focusFeedbackMs,
+        thresholds.max_focus_feedback_ms,
+      );
       await browser.keys(["Enter"]);
+      await saveEvidence("03-nested-directory.png", ".structure-workspace");
       const breadcrumbs = await $('nav[aria-label="Путь к каталогу"]');
       await (await breadcrumbs.$("button=alpha")).click();
       await (await waitForButton("Назад")).click();
@@ -192,7 +452,13 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
       await oldestAnalyzer
         .$('[aria-label^="Sunburst каталога"]')
         .waitForDisplayed();
-      expect(performance.now() - firstDisplayStarted).toBeLessThanOrEqual(
+      const firstDisplayMs = performance.now() - firstDisplayStarted;
+      expect(firstDisplayMs).toBeLessThanOrEqual(
+        thresholds.max_first_display_ms,
+      );
+      recordPerformance(
+        "first_display_ms",
+        firstDisplayMs,
         thresholds.max_first_display_ms,
       );
       await (await waitForButton("История")).click();

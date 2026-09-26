@@ -12,6 +12,7 @@ export type FolderSort = "size_desc" | "name_asc";
 export type DirectoryVisualizationMode = "treemap" | "sunburst";
 export type AnalyzerResultMode =
   "structure" | "large" | "categories" | "search";
+export type AnalyzerListMode = Exclude<AnalyzerResultMode, "structure">;
 export type DirectoryColumn = {
   directory: IndexedEntry;
   page: EntryPage | null;
@@ -37,6 +38,7 @@ export type AnalyzerUiState = {
   focusedEntryId: string | null;
   focusedColumnIndex: number;
   columnScrollOffsets: Record<string, number>;
+  resultScrollOffsets: Record<AnalyzerListMode, number>;
   folderSort: FolderSort;
   resultMode: AnalyzerResultMode;
   visualizationMode: DirectoryVisualizationMode;
@@ -82,6 +84,7 @@ export function createAnalyzerState(
       focusedEntryId: null,
       focusedColumnIndex: 0,
       columnScrollOffsets: {},
+      resultScrollOffsets: { large: 0, categories: 0, search: 0 },
       folderSort: "size_desc",
       resultMode: "structure",
       visualizationMode: "sunburst",
@@ -143,6 +146,7 @@ export type AnalyzerAction =
   | { type: "selection/clear" }
   | { type: "focus/entry"; entryId: string | null; columnIndex: number }
   | { type: "column/scroll"; directoryId: string; scrollTop: number }
+  | { type: "result/scroll"; mode: AnalyzerListMode; scrollTop: number }
   | { type: "folder/sort"; sort: FolderSort }
   | { type: "result/mode"; mode: AnalyzerResultMode }
   | {
@@ -442,6 +446,17 @@ export function analyzerReducer(
           },
         },
       };
+    case "result/scroll":
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          resultScrollOffsets: {
+            ...state.ui.resultScrollOffsets,
+            [action.mode]: action.scrollTop,
+          },
+        },
+      };
     case "folder/sort":
       return { ...state, ui: { ...state.ui, folderSort: action.sort } };
     case "result/mode":
@@ -457,12 +472,29 @@ export function analyzerReducer(
         },
       };
     case "large/success":
-      return { ...state, domain: { ...state.domain, largeFiles: action.page } };
+      return {
+        ...state,
+        domain: { ...state.domain, largeFiles: action.page },
+        ui: {
+          ...state.ui,
+          resultScrollOffsets: {
+            ...state.ui.resultScrollOffsets,
+            large: 0,
+          },
+        },
+      };
     case "category/success":
       return {
         ...state,
         domain: { ...state.domain, categoryFiles: action.page },
-        ui: { ...state.ui, activeCategory: action.category },
+        ui: {
+          ...state.ui,
+          activeCategory: action.category,
+          resultScrollOffsets: {
+            ...state.ui.resultScrollOffsets,
+            categories: 0,
+          },
+        },
       };
     case "search/text":
       return { ...state, ui: { ...state.ui, searchText: action.text } };
@@ -470,13 +502,29 @@ export function analyzerReducer(
       return {
         ...state,
         domain: { ...state.domain, search: null },
-        ui: { ...state.ui, searchText: "", searchQuery: "", selected: [] },
+        ui: {
+          ...state.ui,
+          searchText: "",
+          searchQuery: "",
+          selected: [],
+          resultScrollOffsets: {
+            ...state.ui.resultScrollOffsets,
+            search: 0,
+          },
+        },
       };
     case "search/success":
       return {
         ...state,
         domain: { ...state.domain, search: action.page },
-        ui: { ...state.ui, searchQuery: action.query },
+        ui: {
+          ...state.ui,
+          searchQuery: action.query,
+          resultScrollOffsets: {
+            ...state.ui.resultScrollOffsets,
+            search: 0,
+          },
+        },
       };
     case "queries/invalidate": {
       const cleared = clearQueries(state);

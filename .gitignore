@@ -10,7 +10,6 @@ dist/
 /apps/desktop/src-tauri/icons/ios/
 /release-artifacts/
 
-# Local project instructions and implementation plan
+# Local project instructions
 AGENTS.md
 /IMPLEMENTATION_PLAN*.md
-/docs/

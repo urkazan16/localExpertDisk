@@ -1,4 +1,10 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import {
   type CategorySummary,
   type DirectoryMap,
@@ -134,6 +140,8 @@ function EntryRows({
   platform,
   selected,
   onToggle,
+  scrollTop = 0,
+  onScroll,
 }: {
   items: IndexedEntry[];
   onDirectory?: (entry: IndexedEntry) => void;
@@ -142,10 +150,13 @@ function EntryRows({
   platform: Platform | null;
   selected?: Set<string>;
   onToggle?: (entry: IndexedEntry) => void;
+  scrollTop?: number;
+  onScroll?: (scrollTop: number) => void;
 }) {
-  const [scrollTop, setScrollTop] = useState(0);
-  const pageIdentity = `${items.length}:${items[0]?.id ?? ""}:${items.at(-1)?.id ?? ""}`;
-  useEffect(() => setScrollTop(0), [pageIdentity]);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (viewportRef.current) viewportRef.current.scrollTop = scrollTop;
+  }, [scrollTop]);
   if (items.length === 0) return <p className="hint">Нет объектов.</p>;
   const row = (entry: IndexedEntry): ReactNode => (
     <EntryRowContent
@@ -169,11 +180,12 @@ function EntryRows({
     const end = Math.min(items.length, start + visibleCount);
     return (
       <div
+        ref={viewportRef}
         className="entry-list virtual-entry-list"
         role="list"
         aria-label="Содержимое каталога"
         tabIndex={0}
-        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+        onScroll={(event) => onScroll?.(event.currentTarget.scrollTop)}
       >
         <div
           className="virtual-entry-spacer"
@@ -973,7 +985,11 @@ export function AnalyzerPanel({
                 <EntryRows
                   items={largeFiles.items}
                   onToggle={controller.toggleSelection}
+                  onScroll={(scrollTop) =>
+                    controller.setResultScroll("large", scrollTop)
+                  }
                   platform={platform}
+                  scrollTop={ui.resultScrollOffsets.large}
                   selected={new Set(selected.map((entry) => entry.id))}
                 />
               ) : (
@@ -1043,7 +1059,11 @@ export function AnalyzerPanel({
                   <EntryRows
                     items={categoryFiles.items}
                     onToggle={controller.toggleSelection}
+                    onScroll={(scrollTop) =>
+                      controller.setResultScroll("categories", scrollTop)
+                    }
                     platform={platform}
+                    scrollTop={ui.resultScrollOffsets.categories}
                     selected={new Set(selected.map((entry) => entry.id))}
                   />
                   {categoryFiles.next_cursor && (
@@ -1088,7 +1108,11 @@ export function AnalyzerPanel({
                 <EntryRows
                   items={search.items}
                   onToggle={controller.toggleSelection}
+                  onScroll={(scrollTop) =>
+                    controller.setResultScroll("search", scrollTop)
+                  }
                   platform={platform}
+                  scrollTop={ui.resultScrollOffsets.search}
                   selected={new Set(selected.map((entry) => entry.id))}
                 />
               ) : (

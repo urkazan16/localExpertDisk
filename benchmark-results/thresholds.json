@@ -8,5 +8,7 @@
   "max_cached_directory_ms": 150,
   "max_selection_feedback_ms": 100,
   "max_focus_feedback_ms": 50,
-  "max_search_first_page_ms": 300
+  "max_search_first_page_ms": 300,
+  "min_interaction_fps": 30,
+  "interaction_profile_duration_ms": 10000
 }

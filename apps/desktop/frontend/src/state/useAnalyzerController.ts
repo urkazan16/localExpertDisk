@@ -451,6 +451,10 @@ export function useAnalyzerController({
       dispatch({ type: "focus/entry", entryId, columnIndex }),
     setColumnScroll: (directoryId: string, scrollTop: number) =>
       dispatch({ type: "column/scroll", directoryId, scrollTop }),
+    setResultScroll: (
+      mode: "large" | "categories" | "search",
+      scrollTop: number,
+    ) => dispatch({ type: "result/scroll", mode, scrollTop }),
     setFolderSort: (sort: FolderSort) =>
       dispatch({ type: "folder/sort", sort }),
     setResultMode: (mode: AnalyzerResultMode) =>

@@ -101,4 +101,49 @@ describe("analyzerReducer", () => {
 
     expect(reset).toEqual(createAnalyzerState("scan-2"));
   });
+
+  it("keeps an independent scroll offset for every result mode", () => {
+    let state = initialized();
+    state = analyzerReducer(state, {
+      type: "result/scroll",
+      mode: "large",
+      scrollTop: 920,
+    });
+    state = analyzerReducer(state, {
+      type: "result/scroll",
+      mode: "search",
+      scrollTop: 184,
+    });
+    state = analyzerReducer(state, { type: "result/mode", mode: "search" });
+    state = analyzerReducer(state, { type: "result/mode", mode: "large" });
+
+    expect(state.ui.resultScrollOffsets).toEqual({
+      large: 920,
+      categories: 0,
+      search: 184,
+    });
+  });
+
+  it("resets only the refreshed result mode to the first row", () => {
+    let state = initialized();
+    for (const mode of ["large", "categories", "search"] as const) {
+      state = analyzerReducer(state, {
+        type: "result/scroll",
+        mode,
+        scrollTop: 500,
+      });
+    }
+
+    state = analyzerReducer(state, {
+      type: "search/success",
+      query: "report",
+      page: page([child]),
+    });
+
+    expect(state.ui.resultScrollOffsets).toEqual({
+      large: 500,
+      categories: 500,
+      search: 0,
+    });
+  });
 });

@@ -195,6 +195,39 @@ describe("Analyzer UI", () => {
     expect(within(list).getAllByRole("option").length).toBeLessThan(100);
   });
 
+  it("restores a result mode scroll position after switching modes", async () => {
+    vi.mocked(getFilteredLargeFiles).mockResolvedValue({
+      items: Array.from({ length: 100 }, (_, index) => ({
+        id: String(1000 + index),
+        parent_id: "8",
+        name: `large-${String(index).padStart(3, "0")}`,
+        path: `/fixture/large-${index}`,
+        kind: "file" as const,
+        logical_size: "1",
+        aggregate_size: "1",
+      })),
+      next_cursor: null,
+    });
+    render(<AnalyzerPanel enabled scan={scan} />);
+    await findInExplorer("nested");
+    fireEvent.click(screen.getByRole("button", { name: "Крупные файлы" }));
+    fireEvent.click(screen.getByRole("button", { name: "Обновить выборку" }));
+
+    const list = await screen.findByRole("list", {
+      name: "Содержимое каталога",
+    });
+    fireEvent.scroll(list, { target: { scrollTop: 92 * 50 } });
+    expect(await screen.findByText("large-050")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Структура" }));
+    fireEvent.click(screen.getByRole("button", { name: "Крупные файлы" }));
+    const restored = await screen.findByRole("list", {
+      name: "Содержимое каталога",
+    });
+    expect(restored.scrollTop).toBe(92 * 50);
+    expect(screen.getByText("large-050")).toBeInTheDocument();
+  });
+
   it("supports breadcrumbs and backward and forward folder navigation", async () => {
     const nested = {
       id: "9",
