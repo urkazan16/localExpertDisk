@@ -5,6 +5,7 @@ import {
   formatBytes,
   formatCount,
   isTerminal,
+  scanIssueLabel,
   scanLabels,
 } from "./state/scanState";
 import { useScanController } from "./state/useScanController";
@@ -176,13 +177,7 @@ export function ScanPanel({
               {issuePage.items.map((issue, index) => (
                 <li key={index}>
                   <span className="scan-path">{issue.path}</span>
-                  <span>
-                    {issue.code === "permission_denied"
-                      ? "Нет доступа"
-                      : issue.code === "file_disappeared"
-                        ? "Объект исчез или изменился"
-                        : "Не удалось прочитать метаданные"}
-                  </span>
+                  <span>{scanIssueLabel(issue.code)}</span>
                 </li>
               ))}
             </ul>

@@ -5,7 +5,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScanPanel, formatBytes, formatCount } from "./ScanPanel";
 import {
   cancelScan,
@@ -51,6 +51,7 @@ beforeEach(() => {
   ]);
   vi.mocked(getScan).mockResolvedValue(null);
 });
+afterEach(() => vi.useRealTimers());
 async function start() {
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Обновить" })).toBeEnabled(),
@@ -141,6 +142,50 @@ describe("Scanner UI", () => {
       screen.getByRole("heading", { name: "Сканирование отменено" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  });
+  it("throttles rapid progress while publishing terminal state immediately", async () => {
+    let publish!: (scan: ScanSession) => void;
+    let finish!: (scan: ScanSession) => void;
+    vi.mocked(startScan).mockImplementation((_request, onProgress) => {
+      publish = onProgress;
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    });
+    render(<ScanPanel enabled />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Обновить" })).toBeEnabled(),
+    );
+    fireEvent.change(screen.getByLabelText("Абсолютный путь к каталогу"), {
+      target: { value: "/fixture" },
+    });
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Сканировать" }));
+
+    act(() => publish({ ...initial, state: "scanning", files_count: "1" }));
+    expect(screen.getByText("1")).toBeInTheDocument();
+    act(() => {
+      publish({ ...initial, state: "scanning", files_count: "2" });
+      publish({ ...initial, state: "scanning", files_count: "3" });
+    });
+    expect(screen.queryByText("3")).not.toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(150));
+    expect(screen.getByText("3")).toBeInTheDocument();
+
+    const terminal = {
+      ...initial,
+      state: "completed" as const,
+      files_count: "4",
+    };
+    act(() => publish(terminal));
+    expect(
+      screen.getByRole("heading", { name: "Сканирование завершено" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("4")).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(300));
+    expect(screen.getByText("4")).toBeInTheDocument();
+    await act(async () => finish(terminal));
+    vi.useRealTimers();
   });
   it("labels partial results and retrieves bounded error pages", async () => {
     vi.mocked(getScan).mockResolvedValue({

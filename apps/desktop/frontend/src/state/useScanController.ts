@@ -13,6 +13,7 @@ import { errorMessage } from "../api/errors";
 import { isTerminal, mergeScan } from "./scanState";
 
 export type ScanController = ReturnType<typeof useScanController>;
+export const SCAN_PROGRESS_THROTTLE_MS = 150;
 
 export function useScanController({
   enabled,
@@ -35,13 +36,61 @@ export function useScanController({
   const generation = useRef(0);
   const submitting = useRef(false);
   const mounted = useRef(true);
+  const pendingProgress = useRef<ScanSession | null>(null);
+  const progressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastProgressAt = useRef(0);
+
+  const clearProgressBuffer = useCallback(() => {
+    if (progressTimer.current !== null) clearTimeout(progressTimer.current);
+    progressTimer.current = null;
+    pendingProgress.current = null;
+    lastProgressAt.current = 0;
+  }, []);
+
+  const publishProgress = useCallback(
+    (update: ScanSession, current: number, force = false) => {
+      if (!mounted.current || current !== generation.current) return;
+      const terminal = isTerminal(update);
+      const now = Date.now();
+      const elapsed = now - lastProgressAt.current;
+      if (
+        force ||
+        terminal ||
+        lastProgressAt.current === 0 ||
+        elapsed >= SCAN_PROGRESS_THROTTLE_MS
+      ) {
+        if (progressTimer.current !== null) clearTimeout(progressTimer.current);
+        progressTimer.current = null;
+        pendingProgress.current = null;
+        lastProgressAt.current = now;
+        setScan((previous) => mergeScan(previous, update));
+        return;
+      }
+
+      pendingProgress.current = pendingProgress.current
+        ? mergeScan(pendingProgress.current, update)
+        : update;
+      if (progressTimer.current !== null) return;
+      progressTimer.current = setTimeout(() => {
+        progressTimer.current = null;
+        const pending = pendingProgress.current;
+        pendingProgress.current = null;
+        if (!pending || !mounted.current || current !== generation.current)
+          return;
+        lastProgressAt.current = Date.now();
+        setScan((previous) => mergeScan(previous, pending));
+      }, SCAN_PROGRESS_THROTTLE_MS - elapsed);
+    },
+    [],
+  );
 
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      clearProgressBuffer();
     };
-  }, []);
+  }, [clearProgressBuffer]);
 
   useEffect(() => {
     onScanChange?.(scan);
@@ -125,13 +174,12 @@ export function useScanController({
       setError(null);
       setIssuePage(null);
       const current = ++generation.current;
+      clearProgressBuffer();
       try {
         const result = await startScan({ root_path: target }, (update) => {
-          if (mounted.current && current === generation.current)
-            setScan((previous) => mergeScan(previous, update));
+          publishProgress(update, current);
         });
-        if (mounted.current && current === generation.current)
-          setScan((previous) => mergeScan(previous, result));
+        publishProgress(result, current, true);
         return true;
       } catch (reason: unknown) {
         if (mounted.current) setError(errorMessage(reason));
@@ -141,7 +189,7 @@ export function useScanController({
         if (mounted.current) setStarting(false);
       }
     },
-    [activeScan, enabled, root],
+    [activeScan, clearProgressBuffer, enabled, publishProgress, root],
   );
 
   const cancel = useCallback(async () => {
@@ -176,16 +224,22 @@ export function useScanController({
   }, [issueLoading, issuePage?.next_cursor, scan]);
 
   const reload = useCallback(() => {
+    generation.current += 1;
+    clearProgressBuffer();
     setIssuePage(null);
     setRefresh((value) => value + 1);
-  }, []);
+  }, [clearProgressBuffer]);
 
-  const openScan = useCallback((nextScan: ScanSession) => {
-    generation.current += 1;
-    setIssuePage(null);
-    setRoot(nextScan.root_path);
-    setScan(nextScan);
-  }, []);
+  const openScan = useCallback(
+    (nextScan: ScanSession) => {
+      generation.current += 1;
+      clearProgressBuffer();
+      setIssuePage(null);
+      setRoot(nextScan.root_path);
+      setScan(nextScan);
+    },
+    [clearProgressBuffer],
+  );
 
   return {
     activeScan,

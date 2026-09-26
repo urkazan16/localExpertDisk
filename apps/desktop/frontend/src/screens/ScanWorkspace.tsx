@@ -10,6 +10,8 @@ export function ScanWorkspace({ controller }: { controller: AppController }) {
     ["Каталогов", formatCount(scan.directories_count)],
     ["Размер", formatBytes(scan.logical_size)],
     ["Ошибок доступа", formatCount(scan.errors_count)],
+    ["Пропущено", formatCount(scan.skipped_count)],
+    ["Ссылок", formatCount(scan.symlinks_count)],
   ];
 
   return (

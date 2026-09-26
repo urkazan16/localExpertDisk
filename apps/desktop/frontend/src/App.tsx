@@ -7,6 +7,7 @@ import { AppHeader } from "./shell/AppHeader";
 import { AppShell } from "./shell/AppShell";
 import { Sidebar } from "./shell/Sidebar";
 import { useAppController } from "./state/useAppController";
+import { scanIssueLabel } from "./state/scanState";
 import { Button, EmptyState, InlineAlert, Skeleton } from "./ui/primitives";
 
 function Workspace() {
@@ -134,7 +135,7 @@ function Workspace() {
                     {controller.scan.issuePage.items.map((issue, index) => (
                       <li key={`${issue.path}-${index}`}>
                         <span className="scan-path">{issue.path}</span>
-                        <span>{issue.operation}</span>
+                        <span>{scanIssueLabel(issue.code)}</span>
                       </li>
                     ))}
                   </ul>

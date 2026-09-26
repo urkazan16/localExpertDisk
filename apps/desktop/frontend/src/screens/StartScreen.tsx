@@ -16,6 +16,10 @@ export function StartScreen({ controller }: { controller: AppController }) {
     controller.scan.scan?.root_path === target.path
       ? controller.scan.scan.failure
       : null;
+  const matchingState =
+    controller.scan.scan?.root_path === target.path
+      ? controller.scan.scan.state
+      : null;
 
   return (
     <section className="start-screen" aria-labelledby="start-title">
@@ -63,6 +67,18 @@ export function StartScreen({ controller }: { controller: AppController }) {
             {controller.locationError ??
               controller.scan.error ??
               (matchingFailure ? errorMessage(matchingFailure) : null)}
+          </InlineAlert>
+        )}
+        {!matchingFailure && matchingState === "interrupted" && (
+          <InlineAlert title="Предыдущее сканирование прервано" tone="warning">
+            Результат не завершён. Запустите сканирование снова, чтобы получить
+            актуальные данные.
+          </InlineAlert>
+        )}
+        {!matchingFailure && matchingState === "failed" && (
+          <InlineAlert title="Сканирование не завершено" tone="danger">
+            Повторите запуск. Если ошибка сохраняется, выберите более узкую
+            папку и проверьте права доступа.
           </InlineAlert>
         )}
         <Button

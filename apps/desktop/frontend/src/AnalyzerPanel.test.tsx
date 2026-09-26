@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -218,6 +219,56 @@ describe("Analyzer UI", () => {
     );
   });
 
+  it("ignores an older directory response that finishes after a newer one", async () => {
+    const other = {
+      ...nestedEntry,
+      id: "10",
+      name: "other",
+      path: "/fixture/other",
+    };
+    let resolveNested!: (page: {
+      items: (typeof nestedEntry)[];
+      next_cursor: null;
+    }) => void;
+    let resolveOther!: (page: {
+      items: (typeof nestedEntry)[];
+      next_cursor: null;
+    }) => void;
+    vi.mocked(getChildren).mockImplementation(async (_scan, directory) => {
+      if (directory === "8")
+        return { items: [nestedEntry, other], next_cursor: null };
+      return new Promise((resolve) => {
+        if (directory === "9") resolveNested = resolve;
+        else resolveOther = resolve;
+      });
+    });
+    render(<AnalyzerPanel enabled scan={scan} />);
+    const list = await screen.findByRole("list", {
+      name: "Содержимое каталога",
+    });
+    const rows = within(list).getAllByRole("listitem");
+    fireEvent.click(within(rows[0]).getByRole("button", { name: "Открыть" }));
+    fireEvent.click(within(rows[1]).getByRole("button", { name: "Открыть" }));
+
+    await act(async () => {
+      resolveOther({ items: [], next_cursor: null });
+    });
+    expect(screen.getByRole("button", { name: "other" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await act(async () => {
+      resolveNested({ items: [], next_cursor: null });
+    });
+    expect(screen.getByRole("button", { name: "other" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(
+      screen.queryByRole("button", { name: "nested" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps map, breadcrumb, back and forward navigation in one history", async () => {
     const deep = {
       ...nestedEntry,
@@ -312,12 +363,14 @@ describe("Analyzer UI", () => {
     await waitFor(() => expect(getChildren).toHaveBeenCalledWith("6", "60"));
     rerender(<AnalyzerPanel enabled scan={partialScan} />);
     await waitFor(() => expect(getChildren).toHaveBeenCalledWith("7", "70"));
-    expect(getDirectoryMap).toHaveBeenLastCalledWith(
-      "7",
-      "70",
-      "logical",
-      3,
-      8,
+    await waitFor(() =>
+      expect(getDirectoryMap).toHaveBeenLastCalledWith(
+        "7",
+        "70",
+        "logical",
+        3,
+        8,
+      ),
     );
   });
 
@@ -477,7 +530,9 @@ describe("Analyzer UI", () => {
     });
     const { container } = render(<AnalyzerPanel enabled scan={scan} />);
     fireEvent.click(await screen.findByRole("button", { name: "Sunburst" }));
-    expect(container.querySelectorAll(".sunburst path")).toHaveLength(3);
+    await waitFor(() =>
+      expect(container.querySelectorAll(".sunburst path")).toHaveLength(3),
+    );
     const segment = screen.getByRole("button", {
       name: "Открыть каталог nested в Sunburst",
     });
@@ -566,6 +621,52 @@ describe("Analyzer UI", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Найти" }));
     await waitFor(() => expect(searchEntries).toHaveBeenCalledWith("7", "log"));
+  });
+
+  it("does not restore a stale query page after directory activation", async () => {
+    let resolveSearch!: (page: {
+      items: Array<{
+        id: string;
+        parent_id: string;
+        name: string;
+        path: string;
+        kind: "file";
+        logical_size: string;
+        aggregate_size: string;
+      }>;
+      next_cursor: null;
+    }) => void;
+    vi.mocked(searchEntries).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSearch = resolve;
+        }),
+    );
+    render(<AnalyzerPanel enabled scan={scan} />);
+    await findInExplorer("nested");
+    fireEvent.change(screen.getByLabelText("Имя или часть имени"), {
+      target: { value: "stale" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Найти" }));
+    fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
+    await screen.findByRole("button", { name: "nested" });
+    await act(async () => {
+      resolveSearch({
+        items: [
+          {
+            id: "stale",
+            parent_id: "8",
+            name: "stale-result.txt",
+            path: "/fixture/stale-result.txt",
+            kind: "file",
+            logical_size: "1",
+            aggregate_size: "1",
+          },
+        ],
+        next_cursor: null,
+      });
+    });
+    expect(screen.queryByText("stale-result.txt")).not.toBeInTheDocument();
   });
 
   it("keeps active filters while loading later large-file and search pages", async () => {

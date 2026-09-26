@@ -1,23 +1,5 @@
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
-  useEffect,
-  useRef,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from "react";
-import {
-  getChildren,
-  getCategories,
-  getDirectoryMap,
-  getFilesInCategory,
-  getFilteredLargeFiles,
-  getScanRoot,
-  moveEntriesToTrash,
-  moveEntryToTrash,
-  openEntry,
-  revealEntry,
-  searchEntries,
-  type EntryPage,
   type CategorySummary,
   type DirectoryMap,
   type DirectoryMapMetric,
@@ -27,10 +9,13 @@ import {
   type IndexedEntry,
   type ScanSession,
 } from "./api/generated";
-import { errorMessage } from "./api/errors";
 import { formatBytes } from "./ScanPanel";
+import {
+  type DirectoryVisualizationMode,
+  type FolderSort,
+} from "./state/analyzerState";
+import { useAnalyzerController } from "./state/useAnalyzerController";
 
-const readableStates = new Set(["completed", "partial", "cancelled"]);
 const kindLabels = {
   directory: "Каталог",
   file: "Файл",
@@ -49,8 +34,6 @@ const categoryLabels = {
   databases: "Базы данных",
   other: "Другое",
 } as const;
-type FolderSort = "size_desc" | "name_asc";
-type DirectoryVisualizationMode = "treemap" | "sunburst";
 const VIRTUAL_LIST_THRESHOLD = 40;
 const VIRTUAL_ROW_HEIGHT = 92;
 const VIRTUAL_VIEWPORT_HEIGHT = 430;
@@ -317,21 +300,24 @@ function sunburstArcs(root: DirectoryMapNode): SunburstArc[] {
 function DirectoryVisualization({
   map,
   metric,
+  mode,
   scan,
   loading,
   error,
   onMetric,
+  onMode,
   onDirectory,
 }: {
   map: DirectoryMap | null;
   metric: DirectoryMapMetric;
+  mode: DirectoryVisualizationMode;
   scan: ScanSession;
   loading: boolean;
   error: string | null;
   onMetric: (metric: DirectoryMapMetric) => void;
+  onMode: (mode: DirectoryVisualizationMode) => void;
   onDirectory: (entry: IndexedEntry) => void;
 }) {
-  const [mode, setMode] = useState<DirectoryVisualizationMode>("treemap");
   const segments = map ? directorySegments(map.root) : [];
   const arcs = map ? sunburstArcs(map.root) : [];
   const directory = map?.root.entry;
@@ -370,14 +356,14 @@ function DirectoryVisualization({
           <button
             className={mode === "treemap" ? "active" : "secondary"}
             aria-pressed={mode === "treemap"}
-            onClick={() => setMode("treemap")}
+            onClick={() => onMode("treemap")}
           >
             Treemap
           </button>
           <button
             className={mode === "sunburst" ? "active" : "secondary"}
             aria-pressed={mode === "sunburst"}
-            onClick={() => setMode("sunburst")}
+            onClick={() => onMode("sunburst")}
           >
             Sunburst
           </button>
@@ -601,271 +587,50 @@ export function AnalyzerPanel({
   scan: ScanSession | null;
   trash?: boolean;
 }) {
-  const [root, setRoot] = useState<IndexedEntry | null>(null);
-  const [directory, setDirectory] = useState<IndexedEntry | null>(null);
-  const [navigation, setNavigation] = useState<IndexedEntry[]>([]);
-  const [navigationIndex, setNavigationIndex] = useState(-1);
-  const [children, setChildren] = useState<EntryPage | null>(null);
-  const [directoryMap, setDirectoryMap] = useState<DirectoryMap | null>(null);
-  const [directoryMapMetric, setDirectoryMapMetric] =
-    useState<DirectoryMapMetric>("logical");
-  const [directoryMapLoading, setDirectoryMapLoading] = useState(false);
-  const [directoryMapError, setDirectoryMapError] = useState<string | null>(
-    null,
-  );
-  const [categories, setCategories] = useState<CategorySummary[] | null>(null);
-  const [categoryFiles, setCategoryFiles] = useState<EntryPage | null>(null);
-  const [activeCategory, setActiveCategory] = useState<FileCategory | null>(
-    null,
-  );
-  const [largeFiles, setLargeFiles] = useState<EntryPage | null>(null);
-  const [largeMinSize, setLargeMinSize] = useState("0");
-  const [largeCategory, setLargeCategory] = useState<FileCategory | "">("");
-  const [largeSort, setLargeSort] = useState<FileSort>("size_desc");
-  const [search, setSearch] = useState<EntryPage | null>(null);
-  const [searchText, setSearchText] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<IndexedEntry[]>([]);
-  const [folderSort, setFolderSort] = useState<FolderSort>("size_desc");
-  const version = useRef(0);
-  const mapVersion = useRef(0);
-  const usable = Boolean(enabled && scan && readableStates.has(scan.state));
+  const controller = useAnalyzerController({ enabled, scan });
+  const { domain, ui } = controller.state;
+  const {
+    root,
+    directory,
+    children,
+    directoryMap,
+    categories,
+    categoryFiles,
+    largeFiles,
+    search,
+  } = domain;
+  const {
+    navigation,
+    navigationIndex,
+    selected,
+    folderSort,
+    visualizationMode,
+    directoryMapMetric,
+    directoryMapLoading,
+    directoryMapError,
+    activeCategory,
+    largeMinSize,
+    largeCategory,
+    largeSort,
+    searchText,
+    searchQuery,
+    error,
+  } = ui;
+  const { loading, usable } = controller;
 
-  useEffect(() => {
-    const current = ++version.current;
-    setRoot(null);
-    setDirectory(null);
-    setNavigation([]);
-    setNavigationIndex(-1);
-    setChildren(null);
-    setDirectoryMap(null);
-    setDirectoryMapError(null);
-    setCategories(null);
-    setCategoryFiles(null);
-    setActiveCategory(null);
-    setLargeFiles(null);
-    setSearch(null);
-    setSearchQuery("");
-    setError(null);
-    setSelected([]);
-    if (!usable || !scan) return;
-    setLoading(true);
-    getScanRoot(scan.id)
-      .then(async (entry) => {
-        const [page, categoryItems] = await Promise.all([
-          getChildren(scan.id, entry.id),
-          getCategories(scan.id),
-        ]);
-        if (current === version.current) {
-          setRoot(entry);
-          setDirectory(entry);
-          setNavigation([entry]);
-          setNavigationIndex(0);
-          setChildren(page);
-          setCategories(categoryItems);
-        }
-      })
-      .catch((reason: unknown) => {
-        if (current === version.current) setError(errorMessage(reason));
-      })
-      .finally(() => {
-        if (current === version.current) setLoading(false);
-      });
-  }, [scan, usable]);
-
-  useEffect(() => {
-    const current = ++mapVersion.current;
-    setDirectoryMap(null);
-    setDirectoryMapError(null);
-    setDirectoryMapLoading(false);
-    if (!usable || !scan || !directory) return;
-    if (
-      (directoryMapMetric === "allocated" && scan.allocated_size === null) ||
-      (directoryMapMetric === "unique_allocated" &&
-        scan.unique_allocated_size === null)
-    ) {
-      setDirectoryMapMetric("logical");
-      return;
-    }
-    setDirectoryMapLoading(true);
-    getDirectoryMap(scan.id, directory.id, directoryMapMetric, 3, 8)
-      .then((result) => {
-        if (current === mapVersion.current) setDirectoryMap(result);
-      })
-      .catch((reason: unknown) => {
-        if (current === mapVersion.current)
-          setDirectoryMapError(errorMessage(reason));
-      })
-      .finally(() => {
-        if (current === mapVersion.current) setDirectoryMapLoading(false);
-      });
-  }, [directory, directoryMapMetric, scan, usable]);
-
-  async function showDirectory(
-    entry: IndexedEntry,
-    after: string | null = null,
-  ): Promise<boolean> {
-    if (!scan) return false;
-    const current = version.current;
-    setLoading(true);
-    setError(null);
-    try {
-      const page = await getChildren(scan.id, entry.id, after);
-      if (current === version.current) {
-        setDirectory(entry);
-        setChildren(page);
-        if (after === null) setSelected([]);
-        return true;
-      }
-    } catch (reason: unknown) {
-      if (current === version.current) setError(errorMessage(reason));
-    } finally {
-      if (current === version.current) setLoading(false);
-    }
-    return false;
-  }
-
-  async function openDirectory(entry: IndexedEntry) {
-    if (!(await showDirectory(entry))) return;
-    setNavigation((items) => [...items.slice(0, navigationIndex + 1), entry]);
-    setNavigationIndex((index) => index + 1);
-  }
-
-  async function moveInNavigation(index: number) {
-    const target = navigation[index];
-    if (!target || !(await showDirectory(target))) return;
-    setNavigationIndex(index);
-  }
-
-  async function showLargeFiles(after: string | null = null) {
-    if (!scan) return;
-    setLoading(true);
-    setError(null);
-    try {
-      setLargeFiles(
-        await getFilteredLargeFiles(
-          scan.id,
-          largeMinSize,
-          largeCategory || null,
-          largeSort,
-          after,
-        ),
-      );
-    } catch (reason: unknown) {
-      setError(errorMessage(reason));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function showCategory(
-    category: FileCategory,
-    after: string | null = null,
-  ) {
-    if (!scan) return;
-    setLoading(true);
-    setError(null);
-    try {
-      setActiveCategory(category);
-      setCategoryFiles(await getFilesInCategory(scan.id, category, after));
-    } catch (reason: unknown) {
-      setError(errorMessage(reason));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function submitSearch(event: FormEvent) {
+  function submitSearch(event: FormEvent) {
     event.preventDefault();
-    const query = searchText.trim();
-    if (!scan || !query) return;
-    setLoading(true);
-    setError(null);
-    try {
-      setSearchQuery(query);
-      setSearch(await searchEntries(scan.id, query));
-    } catch (reason: unknown) {
-      setError(errorMessage(reason));
-    } finally {
-      setLoading(false);
-    }
+    void controller.runSearch(searchText.trim());
   }
 
-  async function nextSearchPage() {
-    if (!scan || !search?.next_cursor || !searchQuery) return;
-    setLoading(true);
-    setError(null);
-    try {
-      setSearch(await searchEntries(scan.id, searchQuery, search.next_cursor));
-    } catch (reason: unknown) {
-      setError(errorMessage(reason));
-    } finally {
-      setLoading(false);
-    }
+  function confirmTrashEntry(entry: IndexedEntry) {
+    if (window.confirm(`Переместить «${entry.name || entry.path}» в корзину?`))
+      void controller.trashEntry(entry);
   }
 
-  async function actOnEntry(entry: IndexedEntry, action: "open" | "reveal") {
-    if (!scan) return;
-    setError(null);
-    try {
-      if (action === "open") await openEntry(scan.id, entry.id);
-      else await revealEntry(scan.id, entry.id);
-    } catch (reason: unknown) {
-      setError(errorMessage(reason));
-    }
-  }
-
-  async function trashEntry(entry: IndexedEntry) {
-    if (!scan) return;
-    if (!window.confirm(`Переместить «${entry.name || entry.path}» в корзину?`))
-      return;
-    setError(null);
-    try {
-      await moveEntryToTrash(scan.id, entry.id);
-      if (directory) await showDirectory(directory);
-      setLargeFiles(null);
-      setSearch(null);
-    } catch (reason: unknown) {
-      setError(errorMessage(reason));
-    }
-  }
-
-  function toggleSelection(entry: IndexedEntry) {
-    setSelected((items) =>
-      items.some((item) => item.id === entry.id)
-        ? items.filter((item) => item.id !== entry.id)
-        : [...items, entry],
-    );
-  }
-
-  async function trashSelected() {
-    if (!scan || selected.length === 0) return;
-    if (!window.confirm(`Переместить в корзину ${selected.length} объектов?`))
-      return;
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await moveEntriesToTrash(
-        scan.id,
-        selected.map((entry) => entry.id),
-      );
-      const failed = new Set(result.failed_entry_ids);
-      setSelected((items) => items.filter((entry) => failed.has(entry.id)));
-      if (result.failed_entry_ids.length) {
-        setError(
-          `Не удалось переместить ${result.failed_entry_ids.length} объектов.`,
-        );
-      }
-      if (directory) await showDirectory(directory);
-      setLargeFiles(null);
-      setSearch(null);
-    } catch (reason: unknown) {
-      setError(errorMessage(reason));
-    } finally {
-      setLoading(false);
-    }
+  function confirmTrashSelected() {
+    if (window.confirm(`Переместить в корзину ${selected.length} объектов?`))
+      void controller.trashSelected();
   }
 
   if (!scan || !isTerminalCandidate(scan)) return null;
@@ -898,14 +663,18 @@ export function AnalyzerPanel({
                 <button
                   className="secondary"
                   disabled={navigationIndex <= 0}
-                  onClick={() => void moveInNavigation(navigationIndex - 1)}
+                  onClick={() =>
+                    void controller.navigateTo(navigationIndex - 1)
+                  }
                 >
                   Назад
                 </button>
                 <button
                   className="secondary"
                   disabled={navigationIndex >= navigation.length - 1}
-                  onClick={() => void moveInNavigation(navigationIndex + 1)}
+                  onClick={() =>
+                    void controller.navigateTo(navigationIndex + 1)
+                  }
                 >
                   Вперёд
                 </button>
@@ -923,7 +692,7 @@ export function AnalyzerPanel({
                         aria-current={
                           index === navigationIndex ? "page" : undefined
                         }
-                        onClick={() => void moveInNavigation(index)}
+                        onClick={() => void controller.navigateTo(index)}
                       >
                         {index === 0 ? entry.name || entry.path : entry.name}
                       </button>
@@ -937,7 +706,7 @@ export function AnalyzerPanel({
                 aria-label="Сортировка содержимого каталога"
                 value={folderSort}
                 onChange={(event) =>
-                  setFolderSort(event.target.value as FolderSort)
+                  controller.setFolderSort(event.target.value as FolderSort)
                 }
               >
                 <option value="size_desc">Размер: больше сначала</option>
@@ -947,10 +716,12 @@ export function AnalyzerPanel({
             <EntryRows
               items={sortFolderItems(children.items, folderSort)}
               selected={new Set(selected.map((entry) => entry.id))}
-              onToggle={toggleSelection}
-              onDirectory={(entry) => void openDirectory(entry)}
-              onAction={(entry, action) => void actOnEntry(entry, action)}
-              onTrash={trash ? (entry) => void trashEntry(entry) : undefined}
+              onToggle={controller.toggleSelection}
+              onDirectory={(entry) => void controller.activateDirectory(entry)}
+              onAction={(entry, action) =>
+                void controller.actOnEntry(entry, action)
+              }
+              onTrash={trash ? confirmTrashEntry : undefined}
             />
             {trash && selected.length > 0 && (
               <div className="selection-bar">
@@ -966,7 +737,7 @@ export function AnalyzerPanel({
                 <button
                   className="secondary danger"
                   disabled={loading}
-                  onClick={() => void trashSelected()}
+                  onClick={confirmTrashSelected}
                 >
                   Переместить в корзину
                 </button>
@@ -975,9 +746,7 @@ export function AnalyzerPanel({
             {children.next_cursor && (
               <button
                 className="secondary"
-                onClick={() =>
-                  void showDirectory(directory, children.next_cursor)
-                }
+                onClick={() => void controller.loadNextDirectoryPage()}
               >
                 Следующая страница
               </button>
@@ -986,17 +755,19 @@ export function AnalyzerPanel({
           <DirectoryVisualization
             map={directoryMap}
             metric={directoryMapMetric}
+            mode={visualizationMode}
             scan={scan}
             loading={directoryMapLoading}
             error={directoryMapError}
-            onMetric={setDirectoryMapMetric}
-            onDirectory={(entry) => void openDirectory(entry)}
+            onMetric={controller.setDirectoryMapMetric}
+            onMode={controller.setVisualizationMode}
+            onDirectory={(entry) => void controller.activateDirectory(entry)}
           />
           {categories && (
             <DiskOverview
               scan={scan}
               categories={categories}
-              onCategory={(category) => void showCategory(category)}
+              onCategory={(category) => void controller.showCategory(category)}
             />
           )}
           <section className="analysis-block" aria-labelledby="large-title">
@@ -1004,7 +775,7 @@ export function AnalyzerPanel({
               <h3 id="large-title">Крупные файлы</h3>
               <button
                 className="secondary"
-                onClick={() => void showLargeFiles()}
+                onClick={() => void controller.showLargeFiles()}
               >
                 Показать крупные файлы
               </button>
@@ -1016,7 +787,9 @@ export function AnalyzerPanel({
                   value={largeMinSize}
                   inputMode="numeric"
                   onChange={(event) =>
-                    setLargeMinSize(event.target.value.replace(/\D/g, ""))
+                    controller.setLargeMinSize(
+                      event.target.value.replace(/\D/g, ""),
+                    )
                   }
                 />
               </label>
@@ -1025,7 +798,9 @@ export function AnalyzerPanel({
                 <select
                   value={largeCategory}
                   onChange={(event) =>
-                    setLargeCategory(event.target.value as FileCategory | "")
+                    controller.setLargeCategory(
+                      event.target.value as FileCategory | "",
+                    )
                   }
                 >
                   <option value="">Все</option>
@@ -1041,7 +816,7 @@ export function AnalyzerPanel({
                 <select
                   value={largeSort}
                   onChange={(event) =>
-                    setLargeSort(event.target.value as FileSort)
+                    controller.setLargeSort(event.target.value as FileSort)
                   }
                 >
                   <option value="size_desc">Размер</option>
@@ -1054,15 +829,17 @@ export function AnalyzerPanel({
               <>
                 <EntryRows
                   items={largeFiles.items}
-                  onAction={(entry, action) => void actOnEntry(entry, action)}
-                  onTrash={
-                    trash ? (entry) => void trashEntry(entry) : undefined
+                  onAction={(entry, action) =>
+                    void controller.actOnEntry(entry, action)
                   }
+                  onTrash={trash ? confirmTrashEntry : undefined}
                 />
                 {largeFiles.next_cursor && (
                   <button
                     className="secondary"
-                    onClick={() => void showLargeFiles(largeFiles.next_cursor)}
+                    onClick={() =>
+                      void controller.showLargeFiles(largeFiles.next_cursor)
+                    }
                   >
                     Следующая страница
                   </button>
@@ -1082,7 +859,9 @@ export function AnalyzerPanel({
                     <li key={item.category}>
                       <button
                         className="secondary"
-                        onClick={() => void showCategory(item.category)}
+                        onClick={() =>
+                          void controller.showCategory(item.category)
+                        }
                       >
                         {categoryLabels[item.category]}
                       </button>
@@ -1107,14 +886,19 @@ export function AnalyzerPanel({
               </h3>
               <EntryRows
                 items={categoryFiles.items}
-                onAction={(entry, action) => void actOnEntry(entry, action)}
-                onTrash={trash ? (entry) => void trashEntry(entry) : undefined}
+                onAction={(entry, action) =>
+                  void controller.actOnEntry(entry, action)
+                }
+                onTrash={trash ? confirmTrashEntry : undefined}
               />
               {categoryFiles.next_cursor && (
                 <button
                   className="secondary"
                   onClick={() =>
-                    void showCategory(activeCategory, categoryFiles.next_cursor)
+                    void controller.showCategory(
+                      activeCategory,
+                      categoryFiles.next_cursor,
+                    )
                   }
                 >
                   Следующая страница
@@ -1134,7 +918,9 @@ export function AnalyzerPanel({
                   id="entry-search"
                   value={searchText}
                   maxLength={256}
-                  onChange={(event) => setSearchText(event.target.value)}
+                  onChange={(event) =>
+                    controller.setSearchText(event.target.value)
+                  }
                 />
                 <button type="submit" disabled={!searchText.trim()}>
                   Найти
@@ -1145,16 +931,18 @@ export function AnalyzerPanel({
               <>
                 <EntryRows
                   items={search.items}
-                  onAction={(entry, action) => void actOnEntry(entry, action)}
-                  onTrash={
-                    trash ? (entry) => void trashEntry(entry) : undefined
+                  onAction={(entry, action) =>
+                    void controller.actOnEntry(entry, action)
                   }
+                  onTrash={trash ? confirmTrashEntry : undefined}
                 />
                 {search.next_cursor && (
                   <button
                     className="secondary"
                     disabled={loading}
-                    onClick={() => void nextSearchPage()}
+                    onClick={() =>
+                      void controller.runSearch(searchQuery, search.next_cursor)
+                    }
                   >
                     Следующая страница поиска
                   </button>

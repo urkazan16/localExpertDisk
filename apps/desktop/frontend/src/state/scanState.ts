@@ -72,3 +72,14 @@ export function formatBytes(value: string): string {
   const tenth = ((bytes % scale) * 10n) / scale;
   return `${whole.toLocaleString("ru-RU")}${unit && tenth ? "," + tenth.toString() : ""} ${units[unit]}`;
 }
+
+export function scanIssueLabel(code: string): string {
+  switch (code) {
+    case "permission_denied":
+      return "Нет доступа";
+    case "file_disappeared":
+      return "Объект исчез или изменился";
+    default:
+      return "Не удалось прочитать метаданные";
+  }
+}
