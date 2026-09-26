@@ -18,6 +18,14 @@ export default tseslint.config(
     },
   },
   {
+    files: ["tests/release/**/*.mjs", "tools/*.mjs"],
+    languageOptions: {
+      globals: {
+        process: "readonly",
+      },
+    },
+  },
+  {
     files: ["**/*.{ts,tsx}"],
     plugins: { "react-hooks": hooks },
     rules: hooks.configs.recommended.rules,

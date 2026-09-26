@@ -13,7 +13,7 @@
     "build": "npm run build --workspace @local-expert-disk/frontend",
     "test": "npm run test --workspace @local-expert-disk/frontend",
     "typecheck": "npm run typecheck --workspace @local-expert-disk/frontend",
-    "lint": "eslint apps/desktop/frontend tests/e2e",
+    "lint": "eslint apps/desktop/frontend tests/e2e tests/release tools/*.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "desktop:dev": "cd apps/desktop && tauri dev",
@@ -23,6 +23,9 @@
     "performance:1m": "node tools/performance-profile.mjs 1m",
     "performance:5m": "node tools/performance-profile.mjs 5m",
     "performance:soak": "node tools/performance-profile.mjs soak",
+    "release:version": "node tools/release-version.mjs",
+    "release:build": "node tools/release-build.mjs",
+    "test:release": "node --test tests/release/*.test.mjs",
     "contracts": "cargo generate-contracts",
     "contracts:check": "cargo generate-contracts --check",
     "icons": "tauri icon apps/desktop/assets/icon.svg --output apps/desktop/src-tauri/icons"
