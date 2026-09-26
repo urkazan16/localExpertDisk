@@ -257,7 +257,7 @@ async function measureInteractionFps(durationMs) {
   }, durationMs);
 }
 
-async function runScan(expectedState) {
+async function runScan(expectedState, measureStartFeedback = false) {
   const previous = await $(".analyzer");
   const previousId = (await previous.isExisting())
     ? await previous.getAttribute("data-analyzer-scan-id")
@@ -270,7 +270,25 @@ async function runScan(expectedState) {
   await input.setValue(root);
   await (await waitForButton("Использовать путь")).click();
   await saveEvidence("01-selected-target.png");
-  await (await waitForButton("Начать сканирование")).click();
+  const startButton = await waitForButton("Начать сканирование");
+  if (measureStartFeedback) {
+    const scanStartFeedbackMs = await measureWebdriverClickReaction(
+      startButton,
+      ".start-screen__action",
+      "Запуск…",
+    );
+    expect(scanStartFeedbackMs).toBeGreaterThanOrEqual(0);
+    expect(scanStartFeedbackMs).toBeLessThanOrEqual(
+      thresholds.max_scan_start_feedback_ms,
+    );
+    recordPerformance(
+      "scan_start_feedback_ms",
+      scanStartFeedbackMs,
+      thresholds.max_scan_start_feedback_ms,
+    );
+  } else {
+    await startButton.click();
+  }
   await browser.waitUntil(
     async () => {
       const analyzer = await $(".analyzer");
@@ -313,7 +331,7 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
       await expect($("body")).toHaveText(
         expect.stringContaining("Local Expert Disk"),
       );
-      await runScan("Сканирование завершено");
+      await runScan("Сканирование завершено", true);
       await saveEvidence("02-structure-result.png", ".structure-workspace");
 
       await (await waitForButton("Крупные файлы")).click();

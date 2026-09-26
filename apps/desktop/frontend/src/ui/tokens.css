@@ -42,8 +42,8 @@
   --color-status-success-surface: rgb(49 196 141 / 14%);
   --color-status-warning: #ffb020;
   --color-status-warning-surface: rgb(255 176 32 / 14%);
-  --color-status-danger: #ff686d;
-  --color-status-danger-hover: #ff8084;
+  --color-status-danger: #ff8084;
+  --color-status-danger-hover: #ff989c;
   --color-status-danger-surface: rgb(255 90 95 / 14%);
   --color-status-info: #66c2ff;
   --color-status-info-surface: rgb(102 194 255 / 14%);

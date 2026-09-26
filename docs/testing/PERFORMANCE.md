@@ -10,6 +10,8 @@ WebDriver-команды. Измерения выполняются внутри
 - `benchmark-results/thresholds.json` хранит единый набор порогов backend и UI.
 - Native E2E измеряет открытие уже проиндексированного каталога на малом
   синтетическом fixture. Порог — 150 мс.
+- Первый visual feedback после запуска scan измеряется до появления loading-state
+  основной кнопки. Порог — 100 мс; ожидание ответа native-команды в метрику не входит.
 - Тот же native E2E измеряет selection feedback (100 мс), focus feedback
   (50 мс), первую страницу поиска по локальному индексу (300 мс) и 10-секундный
   scroll/Sunburst interaction profile с нижней границей 30 FPS.
@@ -31,9 +33,10 @@ Native E2E может сохранить JSON-отчёт через
 
 Последний локальный native macOS debug-E2E отчёт:
 `benchmark-results/ui-native-macos-x64.json` (27 сентября 2026 г.). Зафиксировано:
-cached directory 8 мс, selection 39 мс, focus 5 мс, indexed search 19 мс,
-first display 119 мс и 59,99 FPS за 10-секундный interaction profile. Все значения
-прошли пороги из `benchmark-results/thresholds.json`.
+scan start feedback 28 мс, cached directory 15 мс, selection 69 мс, focus 3 мс,
+indexed search 20 мс, first display 135,06 мс и 59,9 FPS за 10-секундный
+interaction profile. Все значения прошли пороги из
+`benchmark-results/thresholds.json`.
 
 ## Условия release-профилирования
 

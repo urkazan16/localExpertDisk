@@ -707,6 +707,49 @@ describe("Analyzer UI", () => {
     );
   });
 
+  it("moves keyboard focus between Sunburst sectors with arrow keys", async () => {
+    const sibling = {
+      ...nestedEntry,
+      id: "10",
+      name: "sibling",
+      path: "/fixture/sibling",
+    };
+    vi.mocked(getDirectoryMap).mockResolvedValue({
+      metric: "logical",
+      root: {
+        entry: root,
+        size: "22",
+        remainder: null,
+        children: [
+          {
+            entry: nestedEntry,
+            size: "20",
+            remainder: null,
+            children: [],
+          },
+          {
+            entry: sibling,
+            size: "2",
+            remainder: null,
+            children: [],
+          },
+        ],
+      },
+    });
+    render(<AnalyzerPanel enabled scan={scan} />);
+    const first = await screen.findByRole("button", {
+      name: "Выбрать nested в Sunburst",
+    });
+    const second = screen.getByRole("button", {
+      name: "Выбрать sibling в Sunburst",
+    });
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowRight" });
+    expect(second).toHaveFocus();
+    fireEvent.keyDown(second, { key: "ArrowLeft" });
+    expect(first).toHaveFocus();
+  });
+
   it("keeps row and Sunburst selection synchronized by entry id", async () => {
     const { container } = render(<AnalyzerPanel enabled scan={scan} />);
     const segment = await screen.findByRole("button", {
@@ -873,6 +916,19 @@ describe("Analyzer UI", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Найти" }));
     await waitFor(() => expect(searchEntries).toHaveBeenCalledWith("7", "log"));
+  });
+
+  it("opens and focuses search with the platform keyboard shortcut", async () => {
+    render(<AnalyzerPanel enabled scan={scan} />);
+    await findInExplorer("nested");
+    fireEvent.keyDown(window, { key: "f", ctrlKey: true });
+    await waitFor(() =>
+      expect(screen.getByLabelText("Имя или часть имени")).toHaveFocus(),
+    );
+    expect(screen.getByRole("button", { name: "Поиск" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   it("keeps one selection model while switching result modes", async () => {
@@ -1079,9 +1135,46 @@ describe("Analyzer UI", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Подтвердить перемещение" }),
     );
-    await waitFor(() =>
-      expect(screen.getByLabelText("Выбрать second")).toBeChecked(),
+    await waitFor(() => {
+      expect(screen.getByLabelText("Выбрать second")).toBeChecked();
+      expect(screen.getByLabelText("Выбрать first")).not.toBeChecked();
+    });
+  });
+
+  it("keeps the review open after a rejected batch so the user can retry", async () => {
+    vi.mocked(moveEntriesToTrash)
+      .mockRejectedValueOnce(new Error("TOCTOU"))
+      .mockResolvedValueOnce({
+        moved_entry_ids: ["9"],
+        failed_entry_ids: [],
+      });
+    render(<AnalyzerPanel enabled scan={scan} trash />);
+    fireEvent.click(await findExplorerOption("nested"));
+    fireEvent.click(screen.getByRole("button", { name: "В корзину" }));
+    const cancel = screen.getByRole("button", { name: "Отмена" });
+    await waitFor(() => expect(cancel).toHaveFocus());
+    fireEvent.click(
+      screen.getByRole("button", { name: "Подтвердить перемещение" }),
     );
-    expect(screen.getByLabelText("Выбрать first")).not.toBeChecked();
+    expect(
+      await screen.findByRole("dialog", {
+        name: "Проверка перед перемещением",
+      }),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Не удалось связаться с приложением",
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Подтвердить перемещение" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", {
+          name: "Проверка перед перемещением",
+        }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(moveEntriesToTrash).toHaveBeenCalledTimes(2);
   });
 });

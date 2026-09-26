@@ -244,11 +244,13 @@ export function Skeleton({
 
 export function DialogSurface({
   children,
+  closeDisabled = false,
   onClose,
   open,
   title,
 }: {
   children: ReactNode;
+  closeDisabled?: boolean;
   onClose: () => void;
   open: boolean;
   title: string;
@@ -256,7 +258,9 @@ export function DialogSurface({
   const titleId = useId();
   const surfaceRef = useRef<HTMLElement>(null);
   const closeRef = useRef(onClose);
+  const closeDisabledRef = useRef(closeDisabled);
   closeRef.current = onClose;
+  closeDisabledRef.current = closeDisabled;
   useEffect(() => {
     if (!open) return;
     const previousFocus =
@@ -270,7 +274,7 @@ export function DialogSurface({
       target?.focus();
     });
     const handleDialogKeyboard = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !closeDisabledRef.current) {
         closeRef.current();
         return;
       }
@@ -314,7 +318,12 @@ export function DialogSurface({
       >
         <header className="ui-dialog__header">
           <h2 id={titleId}>{title}</h2>
-          <IconButton icon="close" label="Закрыть" onClick={onClose} />
+          <IconButton
+            disabled={closeDisabled}
+            icon="close"
+            label="Закрыть"
+            onClick={onClose}
+          />
         </header>
         <div className="ui-dialog__body">{children}</div>
       </section>

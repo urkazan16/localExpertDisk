@@ -87,7 +87,7 @@ export function StartScreen({ controller }: { controller: AppController }) {
           onClick={() => void controller.startSelected()}
           size="large"
         >
-          Начать сканирование
+          {controller.scan.starting ? "Запуск…" : "Начать сканирование"}
         </Button>
       </div>
       <div className="start-visual" aria-hidden="true">

@@ -505,14 +505,6 @@ footer {
   }
 }
 @media (max-width: 42rem) {
-  .app-shell,
-  .app-shell.is-collapsed {
-    grid-template-areas: "header" "workspace" "status";
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .app-sidebar {
-    display: none;
-  }
   .app-header,
   .app-workspace {
     padding-inline: var(--space-4);

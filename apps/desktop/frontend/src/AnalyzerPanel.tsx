@@ -350,10 +350,23 @@ function DirectoryVisualization({
   const [activeSegment, setActiveSegment] = useState<DirectorySegment | null>(
     null,
   );
+  const segmentRefs = useRef(new Map<string, SVGGElement>());
   const segments = map ? directorySegments(map.root) : [];
   const arcs = map ? sunburstArcs(map.root) : [];
+  const interactiveArcs = arcs.filter((segment) => segment.node);
   const directory = map?.root.entry;
   const selectedIds = new Set(selected.map((entry) => entry.id));
+
+  function moveSegmentFocus(entryId: string, direction: -1 | 1) {
+    const index = interactiveArcs.findIndex(
+      (segment) => segment.node?.entry.id === entryId,
+    );
+    if (index < 0) return;
+    const nextIndex =
+      (index + direction + interactiveArcs.length) % interactiveArcs.length;
+    const next = interactiveArcs[nextIndex]?.node?.entry.id;
+    if (next) segmentRefs.current.get(next)?.focus();
+  }
   return (
     <section className="analysis-block" aria-labelledby="directory-map-title">
       <div className="panel-heading directory-map-heading">
@@ -515,6 +528,8 @@ function DirectoryVisualization({
                   role="button"
                   tabIndex={0}
                   aria-label={`Выбрать ${segment.label} в Sunburst`}
+                  aria-pressed={selectedIds.has(segment.node.entry.id)}
+                  aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Enter Space"
                   onClick={() => onSelect(segment.node!.entry)}
                   onBlur={() => setActiveSegment(null)}
                   onDoubleClick={() => {
@@ -523,6 +538,18 @@ function DirectoryVisualization({
                   }}
                   onKeyDown={(event) => {
                     if (
+                      event.key === "ArrowRight" ||
+                      event.key === "ArrowDown"
+                    ) {
+                      event.preventDefault();
+                      moveSegmentFocus(segment.node!.entry.id, 1);
+                    } else if (
+                      event.key === "ArrowLeft" ||
+                      event.key === "ArrowUp"
+                    ) {
+                      event.preventDefault();
+                      moveSegmentFocus(segment.node!.entry.id, -1);
+                    } else if (
                       event.key === "Enter" &&
                       segment.node!.entry.kind === "directory"
                     ) {
@@ -536,6 +563,11 @@ function DirectoryVisualization({
                   onFocus={() => setActiveSegment(segment)}
                   onMouseEnter={() => setActiveSegment(segment)}
                   onMouseLeave={() => setActiveSegment(null)}
+                  ref={(element) => {
+                    if (element)
+                      segmentRefs.current.set(segment.node!.entry.id, element);
+                    else segmentRefs.current.delete(segment.node!.entry.id);
+                  }}
                 >
                   <title>
                     {segment.label} — {segment.node.entry.path} —{" "}
@@ -693,6 +725,7 @@ export function AnalyzerPanel({
   trash?: boolean;
 }) {
   const controller = useAnalyzerController({ enabled, scan });
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [trashNotice, setTrashNotice] = useState<{
     moved: number;
     failed: IndexedEntry[];
@@ -731,6 +764,22 @@ export function AnalyzerPanel({
 
   useEffect(() => setTrashNotice(null), [scan?.id]);
 
+  useEffect(() => {
+    if (!usable) return;
+    const focusSearch = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "f")
+        return;
+      event.preventDefault();
+      controller.setResultMode("search");
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      });
+    };
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, [controller, usable]);
+
   function submitSearch(event: FormEvent) {
     event.preventDefault();
     const query = searchText.trim();
@@ -742,12 +791,13 @@ export function AnalyzerPanel({
   async function trashSelected() {
     const before = [...selected];
     const result = await controller.trashSelected();
-    if (!result) return;
+    if (!result) return false;
     const failedIds = new Set(result.failed_entry_ids);
     setTrashNotice({
       moved: result.moved_entry_ids.length,
       failed: before.filter((entry) => failedIds.has(entry.id)),
     });
+    return true;
   }
 
   if (!scan || !isTerminalCandidate(scan)) return null;
@@ -791,6 +841,7 @@ export function AnalyzerPanel({
                   controller.setSearchText(event.target.value)
                 }
                 placeholder="Имя или часть имени"
+                ref={searchInputRef}
                 value={searchText}
               />
               <button type="submit" disabled={!searchText.trim()}>

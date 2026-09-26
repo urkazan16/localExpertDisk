@@ -59,7 +59,12 @@ AppShell; Windows/Linux visual evidence остаётся cross-platform огра
 
 ### Этап 1. Ввести семантические tokens и каркас компонентов
 
-Статус: выполнен локально 26 сентября 2026 г. Добавлены semantic dark tokens, единый SVG icon set, primitives, component tests и dev-only visual preview.
+Статус: выполнен локально 27 сентября 2026 г. Добавлены semantic dark tokens,
+единый SVG icon set, primitives, component tests и dev-only visual preview.
+Автоматический token gate проверяет отсутствие raw colors вне token source,
+normal/hover/pressed/selected/disabled/focus contracts, desktop hit areas и WCAG AA
+contrast для обычного текста. Danger token скорректирован после обнаружения контраста
+ниже 4.5:1 на danger surface.
 
 Задачи:
 
@@ -83,7 +88,11 @@ AppShell; Windows/Linux visual evidence остаётся cross-platform огра
 
 ### Этап 2. Перестроить AppShell и application state
 
-Статус: выполнен локально 26 сентября 2026 г. Главный layout заменён на shell с Sidebar/Header/Workspace/нижней панелью; startup, locations и scan lifecycle собраны в application controller с явными workspace states и защитой от устаревших ответов. Старые analyzer/tools подключены как переходные workspace modes.
+Статус: выполнен локально 27 сентября 2026 г. Главный layout заменён на shell с
+Sidebar/Header/Workspace/нижней панелью; startup, locations и scan lifecycle собраны
+в application controller с явными workspace states и защитой от устаревших ответов.
+Component gate подтверждает присутствие всех shell landmarks до завершения IPC.
+Старые analyzer/tools подключены как переходные workspace modes.
 
 Задачи:
 
@@ -125,7 +134,13 @@ AppShell; Windows/Linux visual evidence остаётся cross-platform огра
 
 ### Этап 4. Scanning workspace
 
-Статус: выполнен локально 26 сентября 2026 г. Scan lifecycle собран в общем controller/view model; channel updates буферизуются с интервалом 150 мс, а terminal state публикуется немедленно. Workspace показывает реальные counters, indeterminate progress, cancel acknowledgement, recovery/partial states и bounded issue pages. Optional current path не добавлялся: достоверного контракта пока нет.
+Статус: выполнен локально 27 сентября 2026 г. Scan lifecycle собран в общем
+controller/view model; channel updates буферизуются с интервалом 150 мс, а terminal
+state публикуется немедленно. Основная кнопка немедленно переходит в disabled/loading
+«Запуск…»; component test проверяет feedback до ответа IPC, а native E2E измеряет его
+по бюджету ≤100 мс. Workspace показывает реальные counters, indeterminate progress,
+cancel acknowledgement, recovery/partial states и bounded issue pages. Optional
+current path не добавлялся: достоверного контракта пока нет.
 
 Задачи:
 
@@ -187,7 +202,13 @@ AppShell; Windows/Linux visual evidence остаётся cross-platform огра
 
 ### Этап 7. Sunburst/Treemap и двусторонняя синхронизация
 
-Статус: выполнен локально 26 сентября 2026 г. Sunburst стал видом по умолчанию, Treemap сохранён. Row и visualization используют общий selection по stable entry id; single click выбирает, Enter/double click открывает каталог, включая атомарный переход по глубокой Sunburst-ветке. Добавлены реальные path/size/percentage tooltip, стабильные цвета, независимый selected highlight и нативный macOS E2E; Windows/Linux остаются cross-platform ограничением.
+Статус: выполнен локально 27 сентября 2026 г. Sunburst стал видом по умолчанию,
+Treemap сохранён. Row и visualization используют общий selection по stable entry id;
+single click выбирает, Enter/double click открывает каталог, включая атомарный переход
+по глубокой Sunburst-ветке. Сектора сообщают selected state и поддерживают циклическую
+навигацию стрелками без мыши. Добавлены реальные path/size/percentage tooltip,
+стабильные цвета, независимый selected highlight и нативный macOS E2E;
+Windows/Linux остаются cross-platform ограничением.
 
 Задачи:
 
@@ -209,7 +230,15 @@ AppShell; Windows/Linux visual evidence остаётся cross-platform огра
 
 ### Этап 8. Selection, Bottom Action Bar и безопасные действия
 
-Статус: выполнен локально 26 сентября 2026 г. Selection объединён для Structure, Large Files, Categories и Search; sticky action bar показывает точные count/size и оставляет Open/Reveal disabled без единственного выбранного объекта. Trash доступен только по capability и проходит через review-диалог с именами, paths и sizes; после batch-операции обновляются directory/map/активная выборка, failed entries остаются выбранными и показываются в partial-result details. Permanent delete не показывается. Copy path отложен до появления согласованного clipboard boundary в контракте.
+Статус: выполнен локально 27 сентября 2026 г. Selection объединён для Structure,
+Large Files, Categories и Search; sticky action bar показывает точные count/size и
+оставляет Open/Reveal disabled без единственного выбранного объекта. Trash доступен
+только по capability и проходит через review-диалог с неизменяемым snapshot имён,
+paths и sizes. Безопасная «Отмена» получает начальный focus; во время операции dialog
+нельзя закрыть, а при полном отказе он остаётся открыт для повторной попытки. После
+batch-операции обновляются directory/map/активная выборка, failed entries остаются
+выбранными и показываются в partial-result details. Permanent delete не показывается.
+Copy path отложен до появления согласованного clipboard boundary в контракте.
 
 Задачи:
 
@@ -292,7 +321,16 @@ typed filters и дополнительные DTO-поля не имитирую
 
 ### Этап 11. Responsive desktop, accessibility и platform polish
 
-Статус: выполнен локально 26 сентября 2026 г. Layout проверяется на целевых desktop-размерах и minimum 640×520; узкий shell сворачивает sidebar в icon rail, а на minimum скрывает его, сохраняя горизонтальный Column Browser и масштабируемую карту. Добавлены Finder/Проводник/файловый менеджер labels, focus trap и focus return для dialog, защита long paths/overflow и полное отключение scan animation при reduced motion. Browser-preview и runtime/volume errors остаются честными unavailable states; Windows/Linux native visual pass остаётся cross-platform ограничением.
+Статус: выполнен локально 27 сентября 2026 г. Layout проверяется на целевых
+desktop-размерах и minimum 640×520; узкий shell и minimum сохраняют доступную
+навигацию как icon rail вместо скрытия sidebar, горизонтальный Column Browser и
+масштабируемую карту. Добавлены Finder/Проводник/файловый менеджер labels,
+Cmd/Ctrl+F для перехода к поиску, keyboard-навигация Sunburst, focus trap и focus
+return для dialog, защита long paths/overflow и полное отключение scan animation при
+reduced motion. CSS regression gate фиксирует rail, horizontal overflow, bottom-bar
+ellipsis, long-path wrapping и reduced-motion contract. Browser-preview и
+runtime/volume errors остаются честными unavailable states; Windows/Linux native
+visual pass остаётся cross-platform ограничением.
 
 Задачи:
 
@@ -314,9 +352,9 @@ typed filters и дополнительные DTO-поля не имитирую
 Статус: выполнен локально 27 сентября 2026 г. Добавлены bounded component scenarios
 100K/500K/1M, единые UI performance thresholds и воспроизводимая методика в
 `docs/testing/PERFORMANCE.md`. Native macOS E2E автоматически измеряет cached
-directory, selection, focus, indexed search, first display и 10-секундный
+directory, scan-start feedback, selection, focus, indexed search, first display и 10-секундный
 scroll/Sunburst profile. Результат сохранён в
-`benchmark-results/ui-native-macos-x64.json`: все шесть gate-метрик прошли.
+`benchmark-results/ui-native-macos-x64.json`: все семь gate-метрик прошли.
 E2E сохраняет три reference-состояния и отдельный review-dialog screenshot и покрывает
 scan/partial/restart/history/compare/duplicates/trash. Windows/Linux screenshots,
 APFS/NTFS/Linux-specific trash и release-profile остаются platform risks.

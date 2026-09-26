@@ -93,6 +93,18 @@ describe("UI primitives", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("keeps a busy dialog open until its operation can be interrupted safely", () => {
+    const onClose = vi.fn();
+    render(
+      <DialogSurface closeDisabled onClose={onClose} open title="Проверка">
+        Содержимое
+      </DialogSurface>,
+    );
+    expect(screen.getByRole("button", { name: "Закрыть" })).toBeDisabled();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("traps keyboard focus and returns it to the opener", async () => {
     const onClose = vi.fn();
     const { rerender } = render(

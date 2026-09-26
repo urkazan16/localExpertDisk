@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -123,6 +129,10 @@ describe("application shell", () => {
       }),
     );
     render(<App />);
+    expect(screen.getByRole("complementary")).toBeInTheDocument();
+    expect(screen.getByRole("banner")).toBeInTheDocument();
+    expect(screen.getByRole("main")).toBeInTheDocument();
+    expect(screen.getByRole("contentinfo")).toBeInTheDocument();
     expect(screen.getByLabelText("Загрузка приложения")).toBeInTheDocument();
     resolve(info);
     expect(
@@ -156,6 +166,31 @@ describe("application shell", () => {
         expect.any(Function),
       ),
     );
+    expect(
+      await screen.findByText("ИДЁТ ЛОКАЛЬНЫЙ АНАЛИЗ"),
+    ).toBeInTheDocument();
+  });
+
+  it("acknowledges scan start before the native command resolves", async () => {
+    let resolve!: (scan: ScanSession) => void;
+    vi.mocked(startScan).mockReturnValue(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Macintosh HD" }),
+    );
+    const startButton = screen.getByRole("button", {
+      name: "Начать сканирование",
+    });
+    fireEvent.click(startButton);
+    expect(startButton).toBeDisabled();
+    expect(startButton).toHaveAttribute("aria-busy", "true");
+    expect(startButton).toHaveAccessibleName("Запуск…");
+
+    await act(async () => resolve(activeScan));
     expect(
       await screen.findByText("ИДЁТ ЛОКАЛЬНЫЙ АНАЛИЗ"),
     ).toBeInTheDocument();

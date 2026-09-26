@@ -18,23 +18,45 @@ export function SelectionActionBar({
   onClear: () => void;
   onOpen: (entry: IndexedEntry) => void;
   onReveal: (entry: IndexedEntry) => void;
-  onTrash?: (entries: IndexedEntry[]) => Promise<void> | void;
+  onTrash?: (
+    entries: IndexedEntry[],
+  ) => Promise<boolean | void> | boolean | void;
   platform?: Platform | null;
   selected: IndexedEntry[];
   trashAvailable?: boolean;
 }) {
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewEntries, setReviewEntries] = useState<IndexedEntry[]>([]);
+  const [submitting, setSubmitting] = useState(false);
   const count = selected.length;
   const total = selected.reduce(
     (sum, entry) => sum + BigInt(entry.aggregate_size),
     0n,
   );
   const single = count === 1 ? selected[0] : null;
+  const reviewTotal = reviewEntries.reduce(
+    (sum, entry) => sum + BigInt(entry.aggregate_size),
+    0n,
+  );
+
+  function openReview() {
+    setReviewEntries([...selected]);
+    setReviewOpen(true);
+  }
+
+  function closeReview() {
+    if (!submitting) setReviewOpen(false);
+  }
 
   async function confirmTrash() {
-    if (!onTrash || count === 0) return;
-    await onTrash(selected);
-    setReviewOpen(false);
+    if (!onTrash || reviewEntries.length === 0 || submitting) return;
+    setSubmitting(true);
+    try {
+      const completed = await onTrash(reviewEntries);
+      if (completed !== false) setReviewOpen(false);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -64,7 +86,7 @@ export function SelectionActionBar({
           {trashAvailable && onTrash && (
             <Button
               disabled={count === 0 || busy}
-              onClick={() => setReviewOpen(true)}
+              onClick={openReview}
               size="small"
               variant="danger"
             >
@@ -82,16 +104,17 @@ export function SelectionActionBar({
         </div>
       </div>
       <DialogSurface
-        onClose={() => setReviewOpen(false)}
+        closeDisabled={submitting}
+        onClose={closeReview}
         open={reviewOpen}
         title="Проверка перед перемещением"
       >
         <p>
-          В системную корзину будет перемещено: {count} ·{" "}
-          {formatBytes(total.toString())}.
+          В системную корзину будет перемещено: {reviewEntries.length} ·{" "}
+          {formatBytes(reviewTotal.toString())}.
         </p>
         <ul className="selection-review-list">
-          {selected.map((entry) => (
+          {reviewEntries.map((entry) => (
             <li key={entry.id}>
               <strong>{entry.name || entry.path}</strong>
               <span>{entry.path}</span>
@@ -101,14 +124,19 @@ export function SelectionActionBar({
         </ul>
         <div className="selection-review-actions">
           <Button
-            autoFocus
-            disabled={busy}
+            disabled={busy || submitting}
+            loading={submitting}
             onClick={() => void confirmTrash()}
             variant="danger"
           >
             Подтвердить перемещение
           </Button>
-          <Button onClick={() => setReviewOpen(false)} variant="secondary">
+          <Button
+            autoFocus
+            disabled={submitting}
+            onClick={closeReview}
+            variant="secondary"
+          >
             Отмена
           </Button>
         </div>
