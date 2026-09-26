@@ -52,6 +52,7 @@ describe("analyzerReducer", () => {
       type: "directory/activate",
       entry: child,
       page: page(),
+      parentIndex: 0,
     });
     expect(activated.domain.directory).toBe(child);
     expect(activated.ui.navigation).toEqual([root, child]);
@@ -63,16 +64,17 @@ describe("analyzerReducer", () => {
       type: "directory/activate",
       entry: child,
       page: page(),
+      parentIndex: 0,
     });
     const backAtRoot = analyzerReducer(insideChild, {
       type: "directory/navigate",
       index: 0,
-      page: page([child, sibling]),
     });
     const newBranch = analyzerReducer(backAtRoot, {
       type: "directory/activate",
       entry: sibling,
       page: page(),
+      parentIndex: 0,
     });
 
     expect(newBranch.domain.directory).toBe(sibling);

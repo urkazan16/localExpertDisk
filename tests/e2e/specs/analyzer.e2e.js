@@ -53,11 +53,9 @@ async function runScan(expectedState) {
 }
 
 async function explorerRow(name) {
-  const explorer = await $('[aria-label="Содержимое каталога"]');
+  const explorer = await $('[aria-label^="Содержимое каталога "]');
   await explorer.waitForDisplayed();
-  return explorer.$(
-    `.//*[self::li or @role="listitem"][.//strong[normalize-space()="${name}"]]`,
-  );
+  return explorer.$(`[role="option"][aria-label^="${name},"]`);
 }
 
 async function historyRows() {
@@ -77,10 +75,11 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
       await runScan("Сканирование завершено");
 
       const alpha = await explorerRow("alpha");
-      await alpha.$("button=Открыть").click();
-      const deepMap = await $('[aria-label="Открыть каталог deep на карте"]');
-      await deepMap.waitForClickable();
-      await deepMap.click();
+      await alpha.doubleClick();
+      const deepMap = await $('[aria-label="Выбрать deep в Sunburst"]');
+      await deepMap.waitForDisplayed();
+      await browser.execute((element) => element.focus(), deepMap);
+      await browser.keys(["Enter"]);
       const breadcrumbs = await $('nav[aria-label="Путь к каталогу"]');
       await (await breadcrumbs.$("button=alpha")).click();
       await (await waitForButton("Назад")).click();
@@ -121,7 +120,7 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
         `.analyzer[data-analyzer-scan-id="${oldestScanId}"]`,
       );
       await oldestAnalyzer
-        .$('[aria-label^="Treemap каталога"]')
+        .$('[aria-label^="Sunburst каталога"]')
         .waitForDisplayed();
       expect(performance.now() - firstDisplayStarted).toBeLessThanOrEqual(
         thresholds.max_first_display_ms,

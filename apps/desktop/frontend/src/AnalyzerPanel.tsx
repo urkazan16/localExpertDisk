@@ -15,6 +15,7 @@ import {
   type FolderSort,
 } from "./state/analyzerState";
 import { useAnalyzerController } from "./state/useAnalyzerController";
+import { ColumnBrowser } from "./components/ColumnBrowser";
 
 const kindLabels = {
   directory: "Каталог",
@@ -47,19 +48,10 @@ const SUNBURST_COLORS = [
   "var(--color-visualization-6)",
 ];
 
-function sortFolderItems(items: IndexedEntry[], sort: FolderSort) {
-  return [...items].sort((left, right) => {
-    if (sort === "name_asc") {
-      return left.name.localeCompare(right.name, "ru", { sensitivity: "base" });
-    }
-    const sizeOrder =
-      BigInt(right.aggregate_size) > BigInt(left.aggregate_size)
-        ? 1
-        : BigInt(right.aggregate_size) < BigInt(left.aggregate_size)
-          ? -1
-          : 0;
-    return sizeOrder || left.name.localeCompare(right.name, "ru");
-  });
+function colorForKey(key: string) {
+  let hash = 0;
+  for (const character of key) hash = (hash * 31 + character.charCodeAt(0)) | 0;
+  return SUNBURST_COLORS[(hash >>> 0) % SUNBURST_COLORS.length];
 }
 
 function EntryRowContent({
@@ -263,16 +255,17 @@ type SunburstArc = DirectorySegment & {
   startAngle: number;
   endAngle: number;
   color: string;
+  trail: IndexedEntry[];
 };
 
 function sunburstArcs(root: DirectoryMapNode): SunburstArc[] {
   const arcs: SunburstArc[] = [];
-  let colorIndex = 0;
   function append(
     node: DirectoryMapNode,
     depth: number,
     startAngle: number,
     endAngle: number,
+    trail: IndexedEntry[],
   ) {
     const segments = directorySegments(node);
     let angle = startAngle;
@@ -280,20 +273,24 @@ function sunburstArcs(root: DirectoryMapNode): SunburstArc[] {
       const segmentStart = angle;
       angle += segment.ratio * (endAngle - startAngle);
       const segmentEnd = index === segments.length - 1 ? endAngle : angle;
-      const color = SUNBURST_COLORS[colorIndex++ % SUNBURST_COLORS.length];
+      const color = colorForKey(segment.key);
+      const segmentTrail = segment.node
+        ? [...trail, segment.node.entry]
+        : trail;
       arcs.push({
         ...segment,
         depth,
         startAngle: segmentStart,
         endAngle: segmentEnd,
         color,
+        trail: segmentTrail,
       });
       if (segment.node && segment.node.children.length > 0 && depth < 3) {
-        append(segment.node, depth + 1, segmentStart, segmentEnd);
+        append(segment.node, depth + 1, segmentStart, segmentEnd, segmentTrail);
       }
     });
   }
-  append(root, 1, 0, Math.PI * 2);
+  append(root, 1, 0, Math.PI * 2, []);
   return arcs;
 }
 
@@ -307,6 +304,8 @@ function DirectoryVisualization({
   onMetric,
   onMode,
   onDirectory,
+  onSelect,
+  selected,
 }: {
   map: DirectoryMap | null;
   metric: DirectoryMapMetric;
@@ -316,19 +315,25 @@ function DirectoryVisualization({
   error: string | null;
   onMetric: (metric: DirectoryMapMetric) => void;
   onMode: (mode: DirectoryVisualizationMode) => void;
-  onDirectory: (entry: IndexedEntry) => void;
+  onDirectory: (entries: IndexedEntry[]) => void;
+  onSelect: (entry: IndexedEntry) => void;
+  selected: IndexedEntry[];
 }) {
+  const [activeSegment, setActiveSegment] = useState<DirectorySegment | null>(
+    null,
+  );
   const segments = map ? directorySegments(map.root) : [];
   const arcs = map ? sunburstArcs(map.root) : [];
   const directory = map?.root.entry;
+  const selectedIds = new Set(selected.map((entry) => entry.id));
   return (
     <section className="analysis-block" aria-labelledby="directory-map-title">
       <div className="panel-heading directory-map-heading">
         <div>
           <h3 id="directory-map-title">Структура каталога</h3>
           <p className="hint">
-            {directory?.path ?? "Загружаем структуру…"} · нажмите на каталог,
-            чтобы перейти внутрь.
+            {directory?.path ?? "Загружаем структуру…"} · один клик выбирает,
+            двойной клик или Enter открывает каталог.
           </p>
         </div>
         <div className="view-switcher" aria-label="Вид структуры каталога">
@@ -379,7 +384,7 @@ function DirectoryVisualization({
           role="list"
           aria-label={`Treemap каталога ${directory?.name || directory?.path}`}
         >
-          {segments.map((segment, index) => {
+          {segments.map((segment) => {
             const content = (
               <>
                 <strong>{segment.label}</strong>
@@ -396,19 +401,46 @@ function DirectoryVisualization({
             );
             return (
               <div
-                className="directory-treemap-item"
+                className={[
+                  "directory-treemap-item",
+                  segment.node && selectedIds.has(segment.node.entry.id)
+                    ? "selected"
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
                 key={segment.key}
                 role="listitem"
                 style={{
                   flexGrow: Math.max(segment.percent, 1),
                   flexBasis: `${Math.max(segment.percent, 14)}%`,
-                  background: SUNBURST_COLORS[index % SUNBURST_COLORS.length],
+                  background: colorForKey(segment.key),
                 }}
               >
-                {segment.node?.entry.kind === "directory" ? (
+                {segment.node ? (
                   <button
-                    aria-label={`Открыть каталог ${segment.label} на карте`}
-                    onClick={() => onDirectory(segment.node!.entry)}
+                    aria-label={`Выбрать ${segment.label} на карте`}
+                    onClick={() => onSelect(segment.node!.entry)}
+                    onBlur={() => setActiveSegment(null)}
+                    onDoubleClick={() => {
+                      if (segment.node!.entry.kind === "directory")
+                        onDirectory([segment.node!.entry]);
+                    }}
+                    onKeyDown={(event) => {
+                      if (
+                        event.key === "Enter" &&
+                        segment.node!.entry.kind === "directory"
+                      ) {
+                        event.preventDefault();
+                        onDirectory([segment.node!.entry]);
+                      } else if (event.key === " ") {
+                        event.preventDefault();
+                        onSelect(segment.node!.entry);
+                      }
+                    }}
+                    onFocus={() => setActiveSegment(segment)}
+                    onMouseEnter={() => setActiveSegment(segment)}
+                    onMouseLeave={() => setActiveSegment(null)}
                   >
                     {content}
                   </button>
@@ -440,23 +472,50 @@ function DirectoryVisualization({
                   fill={segment.color}
                 />
               );
-              return segment.node?.entry.kind === "directory" ? (
+              return segment.node ? (
                 <g
-                  className="sunburst-directory"
+                  className={[
+                    "sunburst-segment",
+                    segment.node.entry.kind === "directory"
+                      ? "sunburst-directory"
+                      : "",
+                    selectedIds.has(segment.node.entry.id) ? "selected" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
                   key={`${segment.depth}-${segment.key}`}
                   role="button"
                   tabIndex={0}
-                  aria-label={`Открыть каталог ${segment.label} в Sunburst`}
-                  onClick={() => onDirectory(segment.node!.entry)}
+                  aria-label={`Выбрать ${segment.label} в Sunburst`}
+                  onClick={() => onSelect(segment.node!.entry)}
+                  onBlur={() => setActiveSegment(null)}
+                  onDoubleClick={() => {
+                    if (segment.node!.entry.kind === "directory")
+                      onDirectory(segment.trail);
+                  }}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
+                    if (
+                      event.key === "Enter" &&
+                      segment.node!.entry.kind === "directory"
+                    ) {
                       event.preventDefault();
-                      onDirectory(segment.node!.entry);
+                      onDirectory(segment.trail);
+                    } else if (event.key === " ") {
+                      event.preventDefault();
+                      onSelect(segment.node!.entry);
                     }
                   }}
+                  onFocus={() => setActiveSegment(segment)}
+                  onMouseEnter={() => setActiveSegment(segment)}
+                  onMouseLeave={() => setActiveSegment(null)}
                 >
                   <title>
-                    {segment.label}: {formatBytes(segment.size.toString())}
+                    {segment.label} — {segment.node.entry.path} —{" "}
+                    {formatBytes(segment.size.toString())} —{" "}
+                    {segment.percent.toLocaleString("ru-RU", {
+                      maximumFractionDigits: 1,
+                    })}
+                    % родительской папки
                   </title>
                   {path}
                 </g>
@@ -477,12 +536,12 @@ function DirectoryVisualization({
             </text>
           </svg>
           <ul className="sunburst-legend" aria-label="Легенда Sunburst">
-            {segments.map((segment, index) => (
+            {segments.map((segment) => (
               <li key={segment.key}>
                 <span
                   aria-hidden="true"
                   style={{
-                    background: SUNBURST_COLORS[index % SUNBURST_COLORS.length],
+                    background: colorForKey(segment.key),
                   }}
                 />
                 {segment.label} · {formatBytes(segment.size.toString())}
@@ -491,6 +550,19 @@ function DirectoryVisualization({
           </ul>
         </div>
       ) : null}
+      {activeSegment?.node && (
+        <div className="map-tooltip" role="status">
+          <strong>{activeSegment.label}</strong>
+          <span>{activeSegment.node.entry.path}</span>
+          <span>
+            {formatBytes(activeSegment.size.toString())} ·{" "}
+            {activeSegment.percent.toLocaleString("ru-RU", {
+              maximumFractionDigits: 1,
+            })}
+            % родительской папки
+          </span>
+        </div>
+      )}
     </section>
   );
 }
@@ -592,7 +664,7 @@ export function AnalyzerPanel({
   const {
     root,
     directory,
-    children,
+    columns,
     directoryMap,
     categories,
     categoryFiles,
@@ -603,6 +675,7 @@ export function AnalyzerPanel({
     navigation,
     navigationIndex,
     selected,
+    focusedEntryId,
     folderSort,
     visualizationMode,
     directoryMapMetric,
@@ -651,118 +724,153 @@ export function AnalyzerPanel({
       )}
       {loading && <p role="status">Загружаем индекс…</p>}
       {error && <p role="alert">{error}</p>}
-      {usable && root && directory && children && (
+      {usable && root && directory && columns[0]?.page && (
         <>
-          <section className="analysis-block" aria-labelledby="explorer-title">
-            <div className="panel-heading">
-              <div>
-                <h3 id="explorer-title">Проводник папок</h3>
-                <p className="scan-path">{directory.path}</p>
+          <div className="structure-workspace">
+            <section
+              className="analysis-block"
+              aria-labelledby="explorer-title"
+            >
+              <div className="panel-heading">
+                <div>
+                  <h3 id="explorer-title">Проводник папок</h3>
+                  <p className="scan-path">{directory.path}</p>
+                </div>
+                <div className="navigation-actions" aria-label="История папок">
+                  <button
+                    className="secondary"
+                    disabled={navigationIndex <= 0}
+                    onClick={() =>
+                      void controller.navigateTo(navigationIndex - 1)
+                    }
+                  >
+                    Назад
+                  </button>
+                  <button
+                    className="secondary"
+                    disabled={navigationIndex >= navigation.length - 1}
+                    onClick={() =>
+                      void controller.navigateTo(navigationIndex + 1)
+                    }
+                  >
+                    Вперёд
+                  </button>
+                </div>
               </div>
-              <div className="navigation-actions" aria-label="История папок">
-                <button
-                  className="secondary"
-                  disabled={navigationIndex <= 0}
-                  onClick={() =>
-                    void controller.navigateTo(navigationIndex - 1)
+              <nav className="breadcrumbs" aria-label="Путь к каталогу">
+                <ol>
+                  {navigation
+                    .slice(0, navigationIndex + 1)
+                    .map((entry, index) => (
+                      <li key={`${entry.id}-${index}`}>
+                        <button
+                          className="breadcrumb"
+                          disabled={index === navigationIndex}
+                          aria-current={
+                            index === navigationIndex ? "page" : undefined
+                          }
+                          onClick={() => void controller.navigateTo(index)}
+                        >
+                          {index === 0 ? entry.name || entry.path : entry.name}
+                        </button>
+                      </li>
+                    ))}
+                </ol>
+              </nav>
+              <label className="folder-sort">
+                Сортировка
+                <select
+                  aria-label="Сортировка содержимого каталога"
+                  value={folderSort}
+                  onChange={(event) =>
+                    controller.setFolderSort(event.target.value as FolderSort)
                   }
                 >
-                  Назад
-                </button>
-                <button
-                  className="secondary"
-                  disabled={navigationIndex >= navigation.length - 1}
-                  onClick={() =>
-                    void controller.navigateTo(navigationIndex + 1)
-                  }
-                >
-                  Вперёд
-                </button>
-              </div>
-            </div>
-            <nav className="breadcrumbs" aria-label="Путь к каталогу">
-              <ol>
-                {navigation
-                  .slice(0, navigationIndex + 1)
-                  .map((entry, index) => (
-                    <li key={`${entry.id}-${index}`}>
-                      <button
-                        className="breadcrumb"
-                        disabled={index === navigationIndex}
-                        aria-current={
-                          index === navigationIndex ? "page" : undefined
-                        }
-                        onClick={() => void controller.navigateTo(index)}
-                      >
-                        {index === 0 ? entry.name || entry.path : entry.name}
-                      </button>
-                    </li>
-                  ))}
-              </ol>
-            </nav>
-            <label className="folder-sort">
-              Сортировка
-              <select
-                aria-label="Сортировка содержимого каталога"
-                value={folderSort}
-                onChange={(event) =>
-                  controller.setFolderSort(event.target.value as FolderSort)
+                  <option value="size_desc">Размер: больше сначала</option>
+                  <option value="name_asc">Имя: А–Я</option>
+                </select>
+              </label>
+              <ColumnBrowser
+                columns={columns}
+                currentIndex={navigationIndex}
+                focusedEntryId={focusedEntryId}
+                navigation={navigation}
+                scrollOffsets={ui.columnScrollOffsets}
+                selected={selected}
+                sort={folderSort}
+                onActivate={(entry) => void controller.activateDirectory(entry)}
+                onAction={(entry, action) =>
+                  void controller.actOnEntry(entry, action)
                 }
-              >
-                <option value="size_desc">Размер: больше сначала</option>
-                <option value="name_asc">Имя: А–Я</option>
-              </select>
-            </label>
-            <EntryRows
-              items={sortFolderItems(children.items, folderSort)}
-              selected={new Set(selected.map((entry) => entry.id))}
-              onToggle={controller.toggleSelection}
-              onDirectory={(entry) => void controller.activateDirectory(entry)}
-              onAction={(entry, action) =>
-                void controller.actOnEntry(entry, action)
+                onFocus={controller.focusEntry}
+                onLoadNext={(index) =>
+                  void controller.loadNextDirectoryPage(index)
+                }
+                onNavigate={(index) => void controller.navigateTo(index)}
+                onScroll={controller.setColumnScroll}
+                onSelect={controller.selectEntry}
+                onSelectAll={controller.selectAll}
+                onToggle={controller.toggleSelection}
+              />
+              {selected.length > 0 && (
+                <div className="selection-bar">
+                  Выбрано: {selected.length} ·{" "}
+                  {formatBytes(
+                    selected
+                      .reduce(
+                        (total, entry) => total + BigInt(entry.aggregate_size),
+                        0n,
+                      )
+                      .toString(),
+                  )}
+                  {selected.length === 1 && (
+                    <>
+                      <button
+                        className="secondary"
+                        onClick={() =>
+                          void controller.actOnEntry(selected[0], "open")
+                        }
+                      >
+                        Открыть в системе
+                      </button>
+                      <button
+                        className="secondary"
+                        onClick={() =>
+                          void controller.actOnEntry(selected[0], "reveal")
+                        }
+                      >
+                        Показать в системе
+                      </button>
+                    </>
+                  )}
+                  {trash && (
+                    <button
+                      className="secondary danger"
+                      disabled={loading}
+                      onClick={confirmTrashSelected}
+                    >
+                      Переместить в корзину
+                    </button>
+                  )}
+                </div>
+              )}
+            </section>
+            <DirectoryVisualization
+              map={directoryMap}
+              metric={directoryMapMetric}
+              mode={visualizationMode}
+              scan={scan}
+              loading={directoryMapLoading}
+              error={directoryMapError}
+              onMetric={controller.setDirectoryMapMetric}
+              onMode={controller.setVisualizationMode}
+              onDirectory={(entries) =>
+                void controller.activateDirectoryPath(entries)
               }
-              onTrash={trash ? confirmTrashEntry : undefined}
+              onSelect={controller.selectEntry}
+              selected={selected}
             />
-            {trash && selected.length > 0 && (
-              <div className="selection-bar">
-                Выбрано: {selected.length} ·{" "}
-                {formatBytes(
-                  selected
-                    .reduce(
-                      (total, entry) => total + BigInt(entry.aggregate_size),
-                      0n,
-                    )
-                    .toString(),
-                )}
-                <button
-                  className="secondary danger"
-                  disabled={loading}
-                  onClick={confirmTrashSelected}
-                >
-                  Переместить в корзину
-                </button>
-              </div>
-            )}
-            {children.next_cursor && (
-              <button
-                className="secondary"
-                onClick={() => void controller.loadNextDirectoryPage()}
-              >
-                Следующая страница
-              </button>
-            )}
-          </section>
-          <DirectoryVisualization
-            map={directoryMap}
-            metric={directoryMapMetric}
-            mode={visualizationMode}
-            scan={scan}
-            loading={directoryMapLoading}
-            error={directoryMapError}
-            onMetric={controller.setDirectoryMapMetric}
-            onMode={controller.setVisualizationMode}
-            onDirectory={(entry) => void controller.activateDirectory(entry)}
-          />
+          </div>
           {categories && (
             <DiskOverview
               scan={scan}

@@ -16,7 +16,6 @@ import {
   getFilteredLargeFiles,
   getScanRoot,
   moveEntriesToTrash,
-  moveEntryToTrash,
   openEntry,
   revealEntry,
   searchEntries,
@@ -73,10 +72,14 @@ const nestedEntry = {
 };
 
 async function findInExplorer(name: string) {
-  const list = await screen.findByRole("list", {
-    name: "Содержимое каталога",
-  });
-  return within(list).findByText(name);
+  return screen.findByText(name, { selector: ".column-row__name" });
+}
+
+async function findExplorerOption(name: string) {
+  const label = await findInExplorer(name);
+  const option = label.closest('[role="option"]');
+  if (!option) throw new Error(`Explorer option not found: ${name}`);
+  return option as HTMLElement;
 }
 
 beforeEach(() => {
@@ -124,7 +127,7 @@ describe("Analyzer UI", () => {
     render(<AnalyzerPanel enabled scan={scan} />);
     expect(await findInExplorer("nested")).toBeInTheDocument();
     expect(getChildren).toHaveBeenCalledWith("7", "8");
-    fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
+    fireEvent.doubleClick(await findExplorerOption("nested"));
     await waitFor(() =>
       expect(getChildren).toHaveBeenCalledWith("7", "9", null),
     );
@@ -161,8 +164,10 @@ describe("Analyzer UI", () => {
     });
     expect(
       within(
-        screen.getByRole("list", { name: "Содержимое каталога" }),
-      ).getAllByRole("listitem")[0],
+        screen.getByRole("listbox", {
+          name: "Содержимое каталога fixture",
+        }),
+      ).getAllByRole("option")[0],
     ).toHaveTextContent("Арбуз");
   });
 
@@ -182,10 +187,12 @@ describe("Analyzer UI", () => {
     render(<AnalyzerPanel enabled scan={scan} />);
     await findInExplorer("file-000");
     expect(screen.queryByText("file-099")).not.toBeInTheDocument();
-    const list = screen.getByRole("list", { name: "Содержимое каталога" });
-    fireEvent.scroll(list, { target: { scrollTop: 92 * 99 } });
+    const list = screen.getByRole("listbox", {
+      name: "Содержимое каталога fixture",
+    });
+    fireEvent.scroll(list, { target: { scrollTop: 44 * 99 } });
     expect(await findInExplorer("file-099")).toBeInTheDocument();
-    expect(within(list).getAllByRole("listitem").length).toBeLessThan(100);
+    expect(within(list).getAllByRole("option").length).toBeLessThan(100);
   });
 
   it("supports breadcrumbs and backward and forward folder navigation", async () => {
@@ -203,20 +210,125 @@ describe("Analyzer UI", () => {
       next_cursor: null,
     }));
     render(<AnalyzerPanel enabled scan={scan} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Открыть" }));
+    fireEvent.doubleClick(await findExplorerOption("nested"));
     await screen.findByRole("button", { name: "nested" });
+    const callsAfterOpen = vi.mocked(getChildren).mock.calls.length;
     fireEvent.click(screen.getByRole("button", { name: "Назад" }));
-    await waitFor(() =>
-      expect(getChildren).toHaveBeenLastCalledWith("7", "8", null),
+    expect(screen.getByRole("button", { name: "fixture" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
     fireEvent.click(screen.getByRole("button", { name: "Вперёд" }));
-    await waitFor(() =>
-      expect(getChildren).toHaveBeenLastCalledWith("7", "9", null),
+    expect(screen.getByRole("button", { name: "nested" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
     fireEvent.click(screen.getByRole("button", { name: "fixture" }));
-    await waitFor(() =>
-      expect(getChildren).toHaveBeenLastCalledWith("7", "8", null),
+    expect(vi.mocked(getChildren).mock.calls).toHaveLength(callsAfterOpen);
+  });
+
+  it("keeps three directory levels as cached columns", async () => {
+    const deep = {
+      ...nestedEntry,
+      id: "10",
+      parent_id: "9",
+      name: "deep",
+      path: "/fixture/nested/deep",
+    };
+    vi.mocked(getChildren).mockImplementation(async (_scan, directory) => ({
+      items:
+        directory === "8" ? [nestedEntry] : directory === "9" ? [deep] : [],
+      next_cursor: null,
+    }));
+    render(<AnalyzerPanel enabled scan={scan} />);
+    fireEvent.doubleClick(await findExplorerOption("nested"));
+    fireEvent.doubleClick(await findExplorerOption("deep"));
+    await waitFor(() => expect(screen.getAllByRole("listbox")).toHaveLength(3));
+    expect(
+      screen.getByRole("listbox", { name: "Содержимое каталога fixture" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("listbox", { name: "Содержимое каталога nested" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("listbox", { name: "Содержимое каталога deep" }),
+    ).toBeInTheDocument();
+
+    const callsAfterOpen = vi.mocked(getChildren).mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "fixture" }));
+    expect(screen.getAllByRole("listbox")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Вперёд" }));
+    fireEvent.click(screen.getByRole("button", { name: "Вперёд" }));
+    expect(screen.getByRole("button", { name: "deep" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
+    expect(vi.mocked(getChildren).mock.calls).toHaveLength(callsAfterOpen);
+  });
+
+  it("supports keyboard focus, selection and select-all in a column", async () => {
+    const second = {
+      ...nestedEntry,
+      id: "10",
+      name: "second",
+      path: "/fixture/second",
+      kind: "file" as const,
+    };
+    vi.mocked(getChildren).mockResolvedValue({
+      items: [nestedEntry, second],
+      next_cursor: null,
+    });
+    render(<AnalyzerPanel enabled scan={scan} />);
+    const firstRow = await findExplorerOption("nested");
+    const secondRow = await findExplorerOption("second");
+    fireEvent.focus(firstRow);
+    fireEvent.keyDown(firstRow, { key: "ArrowDown" });
+    await waitFor(() => expect(secondRow).toHaveAttribute("tabindex", "0"));
+    fireEvent.keyDown(secondRow, { key: " " });
+    expect(screen.getByLabelText("Выбрать second")).toBeChecked();
+    fireEvent.keyDown(secondRow, { key: "a", ctrlKey: true });
+    expect(screen.getByLabelText("Выбрать nested")).toBeChecked();
+    expect(screen.getByLabelText("Выбрать second")).toBeChecked();
+  });
+
+  it("loads a later page inside its directory column", async () => {
+    const later = {
+      ...nestedEntry,
+      id: "10",
+      name: "later",
+      path: "/fixture/later",
+      kind: "file" as const,
+    };
+    vi.mocked(getChildren)
+      .mockResolvedValueOnce({ items: [nestedEntry], next_cursor: "cursor-1" })
+      .mockResolvedValueOnce({ items: [later], next_cursor: null });
+    render(<AnalyzerPanel enabled scan={scan} />);
+    await findInExplorer("nested");
+    fireEvent.click(screen.getByRole("button", { name: "Следующая страница" }));
+    expect(await findInExplorer("later")).toBeInTheDocument();
+    expect(getChildren).toHaveBeenLastCalledWith("7", "8", "cursor-1");
+  });
+
+  it("shows a directory-specific error without leaving the current folder", async () => {
+    vi.mocked(getChildren).mockImplementation(async (_scan, directory) => {
+      if (directory === "8") return { items: [nestedEntry], next_cursor: null };
+      throw new Error("Доступ запрещён");
+    });
+    render(<AnalyzerPanel enabled scan={scan} />);
+    fireEvent.doubleClick(await findExplorerOption("nested"));
+    const failedColumn = await screen.findByRole("region", {
+      name: "Колонка каталога nested",
+    });
+    expect(await within(failedColumn).findByRole("alert")).toHaveTextContent(
+      "Не удалось связаться с приложением",
+    );
+    expect(screen.getByRole("button", { name: "fixture" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(
+      screen.getByRole("listbox", { name: "Содержимое каталога nested" }),
+    ).toBeInTheDocument();
   });
 
   it("ignores an older directory response that finishes after a newer one", async () => {
@@ -243,12 +355,12 @@ describe("Analyzer UI", () => {
       });
     });
     render(<AnalyzerPanel enabled scan={scan} />);
-    const list = await screen.findByRole("list", {
-      name: "Содержимое каталога",
+    const list = await screen.findByRole("listbox", {
+      name: "Содержимое каталога fixture",
     });
-    const rows = within(list).getAllByRole("listitem");
-    fireEvent.click(within(rows[0]).getByRole("button", { name: "Открыть" }));
-    fireEvent.click(within(rows[1]).getByRole("button", { name: "Открыть" }));
+    const rows = within(list).getAllByRole("option");
+    fireEvent.doubleClick(rows[0]);
+    fireEvent.doubleClick(rows[1]);
 
     await act(async () => {
       resolveOther({ items: [], next_cursor: null });
@@ -307,31 +419,33 @@ describe("Analyzer UI", () => {
       }),
     );
     render(<AnalyzerPanel enabled scan={scan} />);
-    fireEvent.click(
+    fireEvent.keyDown(
       await screen.findByRole("button", {
-        name: "Открыть каталог nested на карте",
+        name: "Выбрать nested в Sunburst",
       }),
+      { key: "Enter" },
     );
-    fireEvent.click(
+    fireEvent.keyDown(
       await screen.findByRole("button", {
-        name: "Открыть каталог deep на карте",
+        name: "Выбрать deep в Sunburst",
       }),
+      { key: "Enter" },
     );
     expect(await screen.findByRole("button", { name: "deep" })).toHaveAttribute(
       "aria-current",
       "page",
     );
     fireEvent.click(screen.getByRole("button", { name: "nested" }));
-    await waitFor(() =>
-      expect(getChildren).toHaveBeenLastCalledWith("7", "9", null),
-    );
+    expect(getChildren).toHaveBeenCalledWith("7", "9", null);
     fireEvent.click(screen.getByRole("button", { name: "Назад" }));
-    await waitFor(() =>
-      expect(getChildren).toHaveBeenLastCalledWith("7", "8", null),
+    expect(screen.getByRole("button", { name: "fixture" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
     fireEvent.click(screen.getByRole("button", { name: "Вперёд" }));
-    await waitFor(() =>
-      expect(getChildren).toHaveBeenLastCalledWith("7", "9", null),
+    expect(screen.getByRole("button", { name: "nested" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
   });
 
@@ -412,10 +526,14 @@ describe("Analyzer UI", () => {
     });
     const started = performance.now();
     render(<AnalyzerPanel enabled scan={hugeScan} />);
-    expect(await screen.findByText("Остальное (99993)")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("list", { name: "Легенда Sunburst" }),
+    ).toHaveTextContent("Остальное (99993)");
     expect(performance.now() - started).toBeLessThan(2_000);
-    const list = screen.getByRole("list", { name: "Содержимое каталога" });
-    expect(within(list).getAllByRole("listitem").length).toBeLessThan(30);
+    const list = screen.getByRole("listbox", {
+      name: "Содержимое каталога fixture",
+    });
+    expect(within(list).getAllByRole("option").length).toBeLessThan(30);
   });
 
   it("renders a disk overview and opens a category from the treemap", async () => {
@@ -457,9 +575,10 @@ describe("Analyzer UI", () => {
       next_cursor: null,
     }));
     render(<AnalyzerPanel enabled scan={scan} />);
-    fireEvent.click(
+    fireEvent.click(await screen.findByRole("button", { name: "Treemap" }));
+    fireEvent.doubleClick(
       await screen.findByRole("button", {
-        name: "Открыть каталог nested на карте",
+        name: "Выбрать nested на карте",
       }),
     );
     await waitFor(() =>
@@ -529,16 +648,102 @@ describe("Analyzer UI", () => {
       },
     });
     const { container } = render(<AnalyzerPanel enabled scan={scan} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Sunburst" }));
+    expect(
+      await screen.findByRole("button", { name: "Sunburst" }),
+    ).toHaveAttribute("aria-pressed", "true");
     await waitFor(() =>
       expect(container.querySelectorAll(".sunburst path")).toHaveLength(3),
     );
     const segment = screen.getByRole("button", {
-      name: "Открыть каталог nested в Sunburst",
+      name: "Выбрать nested в Sunburst",
     });
     fireEvent.keyDown(segment, { key: "Enter" });
     await waitFor(() =>
       expect(getChildren).toHaveBeenLastCalledWith("7", "9", null),
+    );
+  });
+
+  it("keeps row and Sunburst selection synchronized by entry id", async () => {
+    const { container } = render(<AnalyzerPanel enabled scan={scan} />);
+    const segment = await screen.findByRole("button", {
+      name: "Выбрать nested в Sunburst",
+    });
+    fireEvent.click(segment);
+    const row = await findExplorerOption("nested");
+    expect(row).toHaveAttribute("aria-selected", "true");
+    expect(
+      container.querySelector(".sunburst-segment.selected"),
+    ).not.toBeNull();
+
+    fireEvent.click(row);
+    expect(row).toHaveAttribute("aria-selected", "true");
+    expect(
+      container.querySelector(".sunburst-segment.selected"),
+    ).not.toBeNull();
+  });
+
+  it("shows real path, size and percentage in the focused segment tooltip", async () => {
+    render(<AnalyzerPanel enabled scan={scan} />);
+    fireEvent.focus(
+      await screen.findByRole("button", {
+        name: "Выбрать nested в Sunburst",
+      }),
+    );
+    const tooltip = await screen.findByRole("status");
+    expect(tooltip).toHaveTextContent("/fixture/nested");
+    expect(tooltip).toHaveTextContent("20 Б");
+    expect(tooltip).toHaveTextContent("90,9% родительской папки");
+  });
+
+  it("opens a deep Sunburst trail as one atomic column transition", async () => {
+    const deep = {
+      ...nestedEntry,
+      id: "10",
+      parent_id: "9",
+      name: "deep",
+      path: "/fixture/nested/deep",
+    };
+    vi.mocked(getChildren).mockImplementation(async (_scan, directory) => ({
+      items:
+        directory === "8" ? [nestedEntry] : directory === "9" ? [deep] : [],
+      next_cursor: null,
+    }));
+    vi.mocked(getDirectoryMap).mockResolvedValue({
+      metric: "logical",
+      root: {
+        entry: root,
+        size: "22",
+        remainder: null,
+        children: [
+          {
+            entry: nestedEntry,
+            size: "20",
+            remainder: null,
+            children: [
+              {
+                entry: deep,
+                size: "20",
+                remainder: null,
+                children: [],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    render(<AnalyzerPanel enabled scan={scan} />);
+    fireEvent.keyDown(
+      await screen.findByRole("button", {
+        name: "Выбрать deep в Sunburst",
+      }),
+      { key: "Enter" },
+    );
+    await waitFor(() => expect(screen.getAllByRole("listbox")).toHaveLength(3));
+    expect(getChildren).toHaveBeenCalledWith("7", "9", null);
+    expect(getChildren).toHaveBeenCalledWith("7", "10", null);
+    expect(screen.getByRole("button", { name: "deep" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
   });
 
@@ -553,8 +758,11 @@ describe("Analyzer UI", () => {
       },
     });
     render(<AnalyzerPanel enabled scan={scan} />);
-    expect(await screen.findByText("Остальное (91)")).toBeInTheDocument();
-    expect(screen.getByText("37 Б")).toBeInTheDocument();
+    const legend = await screen.findByRole("list", {
+      name: "Легенда Sunburst",
+    });
+    expect(legend).toHaveTextContent("Остальное (91)");
+    expect(legend).toHaveTextContent("37 Б");
   });
 
   it("reloads the map when the allocated-size metric changes", async () => {
@@ -648,7 +856,7 @@ describe("Analyzer UI", () => {
       target: { value: "stale" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Найти" }));
-    fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
+    fireEvent.doubleClick(await findExplorerOption("nested"));
     await screen.findByRole("button", { name: "nested" });
     await act(async () => {
       resolveSearch({
@@ -725,7 +933,7 @@ describe("Analyzer UI", () => {
     vi.mocked(openEntry).mockResolvedValue();
     vi.mocked(revealEntry).mockResolvedValue();
     render(<AnalyzerPanel enabled scan={scan} />);
-    await findInExplorer("nested");
+    fireEvent.click(await findExplorerOption("nested"));
     fireEvent.click(screen.getByRole("button", { name: "Открыть в системе" }));
     await waitFor(() => expect(openEntry).toHaveBeenCalledWith("7", "9"));
     fireEvent.click(screen.getByRole("button", { name: "Показать в системе" }));
@@ -733,13 +941,18 @@ describe("Analyzer UI", () => {
   });
 
   it("offers trash only when the platform advertises it and refreshes the folder", async () => {
-    vi.mocked(moveEntryToTrash).mockResolvedValue();
+    vi.mocked(moveEntriesToTrash).mockResolvedValue({
+      moved_entry_ids: ["9"],
+      failed_entry_ids: [],
+    });
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<AnalyzerPanel enabled scan={scan} trash />);
-    await findInExplorer("nested");
-    fireEvent.click(screen.getByRole("button", { name: "В корзину" }));
+    fireEvent.click(await findExplorerOption("nested"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Переместить в корзину" }),
+    );
     await waitFor(() =>
-      expect(moveEntryToTrash).toHaveBeenCalledWith("7", "9"),
+      expect(moveEntriesToTrash).toHaveBeenCalledWith("7", ["9"]),
     );
     expect(getChildren).toHaveBeenCalledTimes(2);
   });

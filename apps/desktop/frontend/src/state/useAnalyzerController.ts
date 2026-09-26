@@ -125,76 +125,105 @@ export function useAnalyzerController({
     usable,
   ]);
 
-  const loadDirectory = useCallback(
-    async (
-      entry: IndexedEntry,
-      mode: "activate" | "navigate" | "page",
-      index = -1,
-      after: string | null = null,
-    ) => {
-      if (!scan) return false;
+  const activateDirectoryPath = useCallback(
+    async (entries: IndexedEntry[]) => {
+      if (!scan || entries.length === 0) return false;
+      const entry = entries.at(-1)!;
+      const parentIndex = state.ui.navigationIndex;
+      const columnIndex = parentIndex + 1;
       const currentScan = scanGeneration.current;
       const current = ++directoryGeneration.current;
       dispatch({ type: "request/start" });
+      dispatch({ type: "directory/load-start", entry, parentIndex });
       try {
-        const page = await getChildren(scan.id, entry.id, after);
+        const pages = await Promise.all(
+          entries.map((item) => getChildren(scan.id, item.id, null)),
+        );
         if (
           currentScan !== scanGeneration.current ||
           current !== directoryGeneration.current
         )
           return false;
-        if (mode !== "page") {
-          mapGeneration.current += 1;
-          invalidateQueries();
-        }
-        if (mode === "activate")
-          dispatch({ type: "directory/activate", entry, page });
-        else if (mode === "navigate")
-          dispatch({ type: "directory/navigate", index, page });
-        else dispatch({ type: "directory/page", page });
+        mapGeneration.current += 1;
+        invalidateQueries();
+        dispatch({
+          type: "directory/activate-path",
+          entries,
+          pages,
+          parentIndex,
+        });
         return true;
       } catch (reason: unknown) {
         if (
           currentScan === scanGeneration.current &&
           current === directoryGeneration.current
-        )
-          dispatch({ type: "request/error", message: errorMessage(reason) });
+        ) {
+          const message = errorMessage(reason);
+          dispatch({ type: "directory/error", index: columnIndex, message });
+          dispatch({ type: "request/error", message });
+        }
       } finally {
         if (currentScan === scanGeneration.current)
           dispatch({ type: "request/finish" });
       }
       return false;
     },
-    [invalidateQueries, scan],
+    [invalidateQueries, scan, state.ui.navigationIndex],
   );
 
   const activateDirectory = useCallback(
-    (entry: IndexedEntry) => loadDirectory(entry, "activate"),
-    [loadDirectory],
+    (entry: IndexedEntry) => activateDirectoryPath([entry]),
+    [activateDirectoryPath],
   );
 
   const navigateTo = useCallback(
     (index: number) => {
-      const entry = state.ui.navigation[index];
-      return entry
-        ? loadDirectory(entry, "navigate", index)
-        : Promise.resolve(false);
+      if (!state.domain.columns[index]?.page) return false;
+      directoryGeneration.current += 1;
+      mapGeneration.current += 1;
+      invalidateQueries();
+      dispatch({ type: "directory/navigate", index });
+      return true;
     },
-    [loadDirectory, state.ui.navigation],
+    [invalidateQueries, state.domain.columns],
   );
 
-  const loadNextDirectoryPage = useCallback(() => {
-    const entry = state.domain.directory;
-    const cursor = state.domain.children?.next_cursor;
-    return entry && cursor
-      ? loadDirectory(entry, "page", state.ui.navigationIndex, cursor)
-      : Promise.resolve(false);
-  }, [
-    loadDirectory,
-    state.domain.children?.next_cursor,
-    state.domain.directory,
-    state.ui.navigationIndex,
-  ]);
+  const loadNextDirectoryPage = useCallback(
+    async (index = state.ui.navigationIndex) => {
+      if (!scan) return false;
+      const column = state.domain.columns[index];
+      const cursor = column?.page?.next_cursor;
+      if (!column || !cursor) return false;
+      const currentScan = scanGeneration.current;
+      const current = ++directoryGeneration.current;
+      dispatch({ type: "request/start" });
+      dispatch({ type: "directory/page-start", index });
+      try {
+        const page = await getChildren(scan.id, column.directory.id, cursor);
+        if (
+          currentScan !== scanGeneration.current ||
+          current !== directoryGeneration.current
+        )
+          return false;
+        dispatch({ type: "directory/page", index, page });
+        return true;
+      } catch (reason: unknown) {
+        if (
+          currentScan === scanGeneration.current &&
+          current === directoryGeneration.current
+        ) {
+          const message = errorMessage(reason);
+          dispatch({ type: "directory/error", index, message });
+          dispatch({ type: "request/error", message });
+        }
+      } finally {
+        if (currentScan === scanGeneration.current)
+          dispatch({ type: "request/finish" });
+      }
+      return false;
+    },
+    [scan, state.domain.columns, state.ui.navigationIndex],
+  );
 
   const showLargeFiles = useCallback(
     async (after: string | null = null) => {
@@ -302,10 +331,41 @@ export function useAnalyzerController({
 
   const refreshDirectory = useCallback(async () => {
     const directory = state.domain.directory;
+    const index = state.ui.navigationIndex;
     invalidateQueries();
-    if (directory) await loadDirectory(directory, "page");
+    if (scan && directory && index >= 0) {
+      const currentScan = scanGeneration.current;
+      const current = ++directoryGeneration.current;
+      dispatch({ type: "request/start" });
+      dispatch({ type: "directory/page-start", index });
+      try {
+        const page = await getChildren(scan.id, directory.id, null);
+        if (
+          currentScan === scanGeneration.current &&
+          current === directoryGeneration.current
+        )
+          dispatch({ type: "directory/page", index, page });
+      } catch (reason: unknown) {
+        if (
+          currentScan === scanGeneration.current &&
+          current === directoryGeneration.current
+        ) {
+          const message = errorMessage(reason);
+          dispatch({ type: "directory/error", index, message });
+          dispatch({ type: "request/error", message });
+        }
+      } finally {
+        if (currentScan === scanGeneration.current)
+          dispatch({ type: "request/finish" });
+      }
+    }
     dispatch({ type: "queries/invalidate" });
-  }, [invalidateQueries, loadDirectory, state.domain.directory]);
+  }, [
+    invalidateQueries,
+    scan,
+    state.domain.directory,
+    state.ui.navigationIndex,
+  ]);
 
   const trashEntry = useCallback(
     async (entry: IndexedEntry) => {
@@ -352,6 +412,7 @@ export function useAnalyzerController({
     usable,
     loading: state.ui.pendingRequests > 0,
     activateDirectory,
+    activateDirectoryPath,
     navigateTo,
     loadNextDirectoryPage,
     showLargeFiles,
@@ -362,6 +423,14 @@ export function useAnalyzerController({
     trashSelected,
     toggleSelection: (entry: IndexedEntry) =>
       dispatch({ type: "selection/toggle", entry }),
+    selectEntry: (entry: IndexedEntry) =>
+      dispatch({ type: "selection/single", entry }),
+    selectAll: (entries: IndexedEntry[]) =>
+      dispatch({ type: "selection/all", entries }),
+    focusEntry: (entryId: string | null, columnIndex: number) =>
+      dispatch({ type: "focus/entry", entryId, columnIndex }),
+    setColumnScroll: (directoryId: string, scrollTop: number) =>
+      dispatch({ type: "column/scroll", directoryId, scrollTop }),
     setFolderSort: (sort: FolderSort) =>
       dispatch({ type: "folder/sort", sort }),
     setDirectoryMapMetric: (metric: DirectoryMapMetric) =>

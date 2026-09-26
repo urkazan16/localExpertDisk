@@ -10,11 +10,17 @@ import type {
 
 export type FolderSort = "size_desc" | "name_asc";
 export type DirectoryVisualizationMode = "treemap" | "sunburst";
+export type DirectoryColumn = {
+  directory: IndexedEntry;
+  page: EntryPage | null;
+  loading: boolean;
+  error: string | null;
+};
 
 export type AnalyzerDomainState = {
   root: IndexedEntry | null;
   directory: IndexedEntry | null;
-  children: EntryPage | null;
+  columns: DirectoryColumn[];
   directoryMap: DirectoryMap | null;
   categories: CategorySummary[] | null;
   categoryFiles: EntryPage | null;
@@ -26,6 +32,9 @@ export type AnalyzerUiState = {
   navigation: IndexedEntry[];
   navigationIndex: number;
   selected: IndexedEntry[];
+  focusedEntryId: string | null;
+  focusedColumnIndex: number;
+  columnScrollOffsets: Record<string, number>;
   folderSort: FolderSort;
   visualizationMode: DirectoryVisualizationMode;
   directoryMapMetric: DirectoryMapMetric;
@@ -55,7 +64,7 @@ export function createAnalyzerState(
     domain: {
       root: null,
       directory: null,
-      children: null,
+      columns: [],
       directoryMap: null,
       categories: null,
       categoryFiles: null,
@@ -66,8 +75,11 @@ export function createAnalyzerState(
       navigation: [],
       navigationIndex: -1,
       selected: [],
+      focusedEntryId: null,
+      focusedColumnIndex: 0,
+      columnScrollOffsets: {},
       folderSort: "size_desc",
-      visualizationMode: "treemap",
+      visualizationMode: "sunburst",
       directoryMapMetric: "logical",
       activeCategory: null,
       largeMinSize: "0",
@@ -100,11 +112,29 @@ export type AnalyzerAction =
   | { type: "map/error"; message: string }
   | { type: "map/metric"; metric: DirectoryMapMetric }
   | { type: "visualization/mode"; mode: DirectoryVisualizationMode }
-  | { type: "directory/activate"; entry: IndexedEntry; page: EntryPage }
-  | { type: "directory/navigate"; index: number; page: EntryPage }
-  | { type: "directory/page"; page: EntryPage }
+  | { type: "directory/load-start"; entry: IndexedEntry; parentIndex: number }
+  | {
+      type: "directory/activate";
+      entry: IndexedEntry;
+      page: EntryPage;
+      parentIndex: number;
+    }
+  | {
+      type: "directory/activate-path";
+      entries: IndexedEntry[];
+      pages: EntryPage[];
+      parentIndex: number;
+    }
+  | { type: "directory/navigate"; index: number }
+  | { type: "directory/page-start"; index: number }
+  | { type: "directory/page"; index: number; page: EntryPage }
+  | { type: "directory/error"; index: number; message: string }
   | { type: "selection/toggle"; entry: IndexedEntry }
   | { type: "selection/replace"; entries: IndexedEntry[] }
+  | { type: "selection/single"; entry: IndexedEntry }
+  | { type: "selection/all"; entries: IndexedEntry[] }
+  | { type: "focus/entry"; entryId: string | null; columnIndex: number }
+  | { type: "column/scroll"; directoryId: string; scrollTop: number }
   | { type: "folder/sort"; sort: FolderSort }
   | {
       type: "large/filters";
@@ -117,6 +147,18 @@ export type AnalyzerAction =
   | { type: "search/text"; text: string }
   | { type: "search/success"; query: string; page: EntryPage }
   | { type: "queries/invalidate" };
+
+function clearQueries(state: AnalyzerState) {
+  return {
+    domain: {
+      ...state.domain,
+      categoryFiles: null,
+      largeFiles: null,
+      search: null,
+    },
+    ui: { ...state.ui, activeCategory: null, searchQuery: "" },
+  };
+}
 
 export function analyzerReducer(
   state: AnalyzerState,
@@ -132,7 +174,14 @@ export function analyzerReducer(
           ...state.domain,
           root: action.root,
           directory: action.root,
-          children: action.children,
+          columns: [
+            {
+              directory: action.root,
+              page: action.children,
+              loading: false,
+              error: null,
+            },
+          ],
           categories: action.categories,
         },
         ui: {
@@ -140,6 +189,8 @@ export function analyzerReducer(
           navigation: [action.root],
           navigationIndex: 0,
           selected: [],
+          focusedEntryId: action.children.items[0]?.id ?? null,
+          focusedColumnIndex: 0,
         },
       };
     case "request/start":
@@ -167,11 +218,7 @@ export function analyzerReducer(
       return {
         ...state,
         domain: { ...state.domain, directoryMap: null },
-        ui: {
-          ...state.ui,
-          directoryMapLoading: true,
-          directoryMapError: null,
-        },
+        ui: { ...state.ui, directoryMapLoading: true, directoryMapError: null },
       };
     case "map/success":
       return {
@@ -194,59 +241,146 @@ export function analyzerReducer(
         ui: { ...state.ui, directoryMapMetric: action.metric },
       };
     case "visualization/mode":
-      return {
-        ...state,
-        ui: { ...state.ui, visualizationMode: action.mode },
-      };
-    case "directory/activate": {
-      const navigation = [
-        ...state.ui.navigation.slice(0, state.ui.navigationIndex + 1),
-        action.entry,
-      ];
+      return { ...state, ui: { ...state.ui, visualizationMode: action.mode } };
+    case "directory/load-start":
       return {
         ...state,
         domain: {
           ...state.domain,
+          columns: [
+            ...state.domain.columns.slice(0, action.parentIndex + 1),
+            { directory: action.entry, page: null, loading: true, error: null },
+          ],
+        },
+      };
+    case "directory/activate": {
+      const navigation = [
+        ...state.ui.navigation.slice(0, action.parentIndex + 1),
+        action.entry,
+      ];
+      const cleared = clearQueries(state);
+      return {
+        ...state,
+        domain: {
+          ...cleared.domain,
           directory: action.entry,
-          children: action.page,
-          categoryFiles: null,
-          largeFiles: null,
-          search: null,
+          columns: [
+            ...state.domain.columns.slice(0, action.parentIndex + 1),
+            {
+              directory: action.entry,
+              page: action.page,
+              loading: false,
+              error: null,
+            },
+          ],
         },
         ui: {
-          ...state.ui,
+          ...cleared.ui,
           navigation,
           navigationIndex: navigation.length - 1,
           selected: [],
-          activeCategory: null,
-          searchQuery: "",
+          focusedEntryId: action.page.items[0]?.id ?? null,
+          focusedColumnIndex: navigation.length - 1,
+        },
+      };
+    }
+    case "directory/activate-path": {
+      const current = action.entries.at(-1);
+      const currentPage = action.pages.at(-1);
+      if (
+        !current ||
+        !currentPage ||
+        action.entries.length !== action.pages.length
+      )
+        return state;
+      const navigation = [
+        ...state.ui.navigation.slice(0, action.parentIndex + 1),
+        ...action.entries,
+      ];
+      const cleared = clearQueries(state);
+      return {
+        ...state,
+        domain: {
+          ...cleared.domain,
+          directory: current,
+          columns: [
+            ...state.domain.columns.slice(0, action.parentIndex + 1),
+            ...action.entries.map((entry, index) => ({
+              directory: entry,
+              page: action.pages[index],
+              loading: false,
+              error: null,
+            })),
+          ],
+        },
+        ui: {
+          ...cleared.ui,
+          navigation,
+          navigationIndex: navigation.length - 1,
+          selected: [],
+          focusedEntryId: currentPage.items[0]?.id ?? null,
+          focusedColumnIndex: navigation.length - 1,
         },
       };
     }
     case "directory/navigate": {
       const entry = state.ui.navigation[action.index];
-      if (!entry) return state;
+      const column = state.domain.columns[action.index];
+      if (!entry || !column?.page) return state;
+      const cleared = clearQueries(state);
+      return {
+        ...state,
+        domain: { ...cleared.domain, directory: entry },
+        ui: {
+          ...cleared.ui,
+          navigationIndex: action.index,
+          selected: [],
+          focusedEntryId: column.page.items[0]?.id ?? null,
+          focusedColumnIndex: action.index,
+        },
+      };
+    }
+    case "directory/page-start":
       return {
         ...state,
         domain: {
           ...state.domain,
-          directory: entry,
-          children: action.page,
-          categoryFiles: null,
-          largeFiles: null,
-          search: null,
+          columns: state.domain.columns.map((column, index) =>
+            index === action.index
+              ? { ...column, loading: true, error: null }
+              : column,
+          ),
+        },
+      };
+    case "directory/page":
+      return {
+        ...state,
+        domain: {
+          ...state.domain,
+          columns: state.domain.columns.map((column, index) =>
+            index === action.index
+              ? { ...column, page: action.page, loading: false, error: null }
+              : column,
+          ),
         },
         ui: {
           ...state.ui,
-          navigationIndex: action.index,
-          selected: [],
-          activeCategory: null,
-          searchQuery: "",
+          focusedEntryId: action.page.items[0]?.id ?? null,
+          focusedColumnIndex: action.index,
         },
       };
-    }
-    case "directory/page":
-      return { ...state, domain: { ...state.domain, children: action.page } };
+    case "directory/error":
+      return {
+        ...state,
+        domain: {
+          ...state.domain,
+          columns: state.domain.columns.map((column, index) =>
+            index === action.index
+              ? { ...column, loading: false, error: action.message }
+              : column,
+          ),
+        },
+      };
     case "selection/toggle": {
       const selected = state.ui.selected.some(
         (item) => item.id === action.entry.id,
@@ -257,6 +391,37 @@ export function analyzerReducer(
     }
     case "selection/replace":
       return { ...state, ui: { ...state.ui, selected: action.entries } };
+    case "selection/single":
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          selected: [action.entry],
+          focusedEntryId: action.entry.id,
+        },
+      };
+    case "selection/all":
+      return { ...state, ui: { ...state.ui, selected: action.entries } };
+    case "focus/entry":
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          focusedEntryId: action.entryId,
+          focusedColumnIndex: action.columnIndex,
+        },
+      };
+    case "column/scroll":
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          columnScrollOffsets: {
+            ...state.ui.columnScrollOffsets,
+            [action.directoryId]: action.scrollTop,
+          },
+        },
+      };
     case "folder/sort":
       return { ...state, ui: { ...state.ui, folderSort: action.sort } };
     case "large/filters":
@@ -285,20 +450,9 @@ export function analyzerReducer(
         domain: { ...state.domain, search: action.page },
         ui: { ...state.ui, searchQuery: action.query },
       };
-    case "queries/invalidate":
-      return {
-        ...state,
-        domain: {
-          ...state.domain,
-          categoryFiles: null,
-          largeFiles: null,
-          search: null,
-        },
-        ui: {
-          ...state.ui,
-          activeCategory: null,
-          searchQuery: "",
-        },
-      };
+    case "queries/invalidate": {
+      const cleared = clearQueries(state);
+      return { ...state, ...cleared };
+    }
   }
 }
