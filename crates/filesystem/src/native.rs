@@ -132,10 +132,8 @@ pub fn decode_path(bytes: Vec<u8>) -> io::Result<PathBuf> {
             "Invalid UTF-16 path",
         ));
     }
-    let words: Vec<_> = bytes
-        .chunks_exact(2)
-        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-        .collect();
+    let (pairs, _) = bytes.as_chunks::<2>();
+    let words: Vec<_> = pairs.iter().map(|pair| u16::from_le_bytes(*pair)).collect();
     Ok(PathBuf::from(OsString::from_wide(&words)))
 }
 
