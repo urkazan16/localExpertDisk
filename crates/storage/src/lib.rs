@@ -386,7 +386,10 @@ mod tests {
         let recovered = reopened.get_scan(scan_id).unwrap();
         assert_eq!(recovered.state, domain::ScanState::Interrupted);
         assert_eq!(recovered.files_count, "0");
-        assert_eq!(recovered.unique_allocated_size.as_deref(), Some("0"));
+        assert_eq!(
+            recovered.unique_allocated_size.as_deref(),
+            cfg!(unix).then_some("0")
+        );
     }
 }
 
