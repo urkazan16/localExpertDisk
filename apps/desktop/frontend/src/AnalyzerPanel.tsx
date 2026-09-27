@@ -26,7 +26,13 @@ import { useAnalyzerController } from "./state/useAnalyzerController";
 import { ColumnBrowser } from "./components/ColumnBrowser";
 import { SelectionActionBar } from "./components/SelectionActionBar";
 import { revealActionLabel } from "./platformLabels";
-import { InlineAlert, SegmentedControl } from "./ui/primitives";
+import {
+  Checkbox,
+  InlineAlert,
+  SearchField,
+  SegmentedControl,
+  SelectControl,
+} from "./ui/primitives";
 
 const kindLabels = {
   directory: "Каталог",
@@ -91,9 +97,8 @@ function EntryRowContent({
   return (
     <>
       {onToggle && entry.kind !== "symlink" && entry.kind !== "other" && (
-        <input
+        <Checkbox
           aria-label={`Выбрать ${entry.name || entry.path}`}
-          type="checkbox"
           checked={selected?.has(entry.id) ?? false}
           onChange={() => onToggle(entry)}
         />
@@ -380,7 +385,7 @@ function DirectoryVisualization({
         <div className="view-switcher" aria-label="Вид структуры каталога">
           <label>
             Размер
-            <select
+            <SelectControl
               aria-label="Метрика карты каталогов"
               value={metric}
               onChange={(event) =>
@@ -397,22 +402,17 @@ function DirectoryVisualization({
               >
                 Уникально на диске
               </option>
-            </select>
+            </SelectControl>
           </label>
-          <button
-            className={mode === "treemap" ? "active" : "secondary"}
-            aria-pressed={mode === "treemap"}
-            onClick={() => onMode("treemap")}
-          >
-            Treemap
-          </button>
-          <button
-            className={mode === "sunburst" ? "active" : "secondary"}
-            aria-pressed={mode === "sunburst"}
-            onClick={() => onMode("sunburst")}
-          >
-            Sunburst
-          </button>
+          <SegmentedControl<DirectoryVisualizationMode>
+            label="Визуализация структуры"
+            onChange={onMode}
+            options={[
+              { value: "treemap", label: "Treemap" },
+              { value: "sunburst", label: "Sunburst" },
+            ]}
+            value={mode}
+          />
         </div>
       </div>
       {loading && <p role="status">Строим карту каталогов…</p>}
@@ -833,14 +833,14 @@ export function AnalyzerPanel({
               value={resultMode}
             />
             <form className="analyzer-header-search" onSubmit={submitSearch}>
-              <label htmlFor="entry-search">Имя или часть имени</label>
-              <input
+              <SearchField
                 id="entry-search"
+                label="Имя или часть имени"
                 maxLength={256}
                 onChange={(event) =>
                   controller.setSearchText(event.target.value)
                 }
-                placeholder="Имя или часть имени"
+                placeholder="Поиск по имени"
                 ref={searchInputRef}
                 value={searchText}
               />
@@ -909,7 +909,7 @@ export function AnalyzerPanel({
                 </nav>
                 <label className="folder-sort">
                   Сортировка
-                  <select
+                  <SelectControl
                     aria-label="Сортировка содержимого каталога"
                     value={folderSort}
                     onChange={(event) =>
@@ -918,7 +918,7 @@ export function AnalyzerPanel({
                   >
                     <option value="size_desc">Размер: больше сначала</option>
                     <option value="name_asc">Имя: А–Я</option>
-                  </select>
+                  </SelectControl>
                 </label>
                 <ColumnBrowser
                   columns={columns}
@@ -984,6 +984,7 @@ export function AnalyzerPanel({
                 <label>
                   Минимум, байт
                   <input
+                    className="ui-input"
                     aria-label="Минимальный размер крупного файла"
                     inputMode="numeric"
                     onChange={(event) =>
@@ -996,7 +997,7 @@ export function AnalyzerPanel({
                 </label>
                 <label>
                   Категория
-                  <select
+                  <SelectControl
                     aria-label="Категория крупных файлов"
                     onChange={(event) =>
                       controller.setLargeCategory(
@@ -1011,11 +1012,11 @@ export function AnalyzerPanel({
                         {label}
                       </option>
                     ))}
-                  </select>
+                  </SelectControl>
                 </label>
                 <label>
                   Сортировка
-                  <select
+                  <SelectControl
                     aria-label="Сортировка крупных файлов"
                     onChange={(event) =>
                       controller.setLargeSort(event.target.value as FileSort)
@@ -1025,7 +1026,7 @@ export function AnalyzerPanel({
                     <option value="size_desc">Размер</option>
                     <option value="modified_desc">Изменён</option>
                     <option value="name_asc">Имя</option>
-                  </select>
+                  </SelectControl>
                 </label>
               </div>
               {!largeFiles ? (

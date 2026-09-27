@@ -26,6 +26,7 @@ import {
 } from "./api/generated";
 import { errorMessage } from "./api/errors";
 import { formatBytes } from "./ScanPanel";
+import { Checkbox, SelectControl } from "./ui/primitives";
 
 export function HistoryDuplicatesPanel({
   enabled,
@@ -325,7 +326,7 @@ export function HistoryDuplicatesPanel({
             <div className="retention-controls">
               <label>
                 Хранить последних
-                <select
+                <SelectControl
                   aria-label="Количество сохраняемых сканирований"
                   value={retention}
                   onChange={(event) =>
@@ -337,7 +338,7 @@ export function HistoryDuplicatesPanel({
                       {value}
                     </option>
                   ))}
-                </select>
+                </SelectControl>
               </label>
               <button
                 className="secondary"
@@ -357,8 +358,7 @@ export function HistoryDuplicatesPanel({
                 key={scan.id}
               >
                 <label className="history-choice">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={selectedScans.includes(scan.id)}
                     disabled={!readableHistoryState(scan)}
                     onChange={() => toggleComparedScan(scan.id)}
@@ -484,8 +484,7 @@ export function HistoryDuplicatesPanel({
                             const checked = selectedEntries.has(entry.id);
                             return (
                               <label key={entry.id}>
-                                <input
-                                  type="checkbox"
+                                <Checkbox
                                   checked={checked}
                                   disabled={
                                     !trash ||

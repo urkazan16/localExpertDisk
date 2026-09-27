@@ -9,6 +9,7 @@ import type { IndexedEntry } from "../api/generated";
 import { formatBytes } from "../ScanPanel";
 import type { DirectoryColumn, FolderSort } from "../state/analyzerState";
 import { Icon } from "../ui/icons";
+import { Checkbox } from "../ui/primitives";
 
 const ROW_HEIGHT = 44;
 const VIEWPORT_HEIGHT = 420;
@@ -180,12 +181,11 @@ function Column({
         tabIndex={focusedEntryId === entry.id ? 0 : -1}
       >
         {entry.kind !== "symlink" && entry.kind !== "other" ? (
-          <input
+          <Checkbox
             aria-label={`Выбрать ${entry.name || entry.path}`}
             checked={selected}
             onClick={(event) => event.stopPropagation()}
             onChange={() => onToggle(entry)}
-            type="checkbox"
           />
         ) : (
           <span className="column-row__checkbox-placeholder" />

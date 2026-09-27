@@ -3,6 +3,7 @@ import {
   useId,
   useRef,
   type ButtonHTMLAttributes,
+  type ComponentPropsWithRef,
   type HTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
@@ -144,6 +145,60 @@ export function TextField({
   );
 }
 
+export function SearchField({
+  className,
+  id: providedId,
+  label,
+  ref,
+  ...props
+}: ComponentPropsWithRef<"input"> & {
+  label: string;
+}) {
+  const generatedId = useId();
+  const id = providedId ?? generatedId;
+  return (
+    <label className={classes("ui-search", className)} htmlFor={id}>
+      <span className="ui-visually-hidden">{label}</span>
+      <Icon aria-hidden="true" name="search" />
+      <input
+        {...props}
+        className="ui-search__input"
+        id={id}
+        ref={ref}
+        type="search"
+      />
+    </label>
+  );
+}
+
+export function SelectControl({
+  children,
+  className,
+  ...props
+}: SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <span className={classes("ui-select-shell", className)}>
+      <select {...props} className="ui-select">
+        {children}
+      </select>
+      <Icon aria-hidden="true" name="chevron-down" size={14} />
+    </span>
+  );
+}
+
+export function Checkbox({
+  className,
+  ...props
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "type">) {
+  return (
+    <input
+      {...props}
+      className={classes("ui-checkbox", className)}
+      type="checkbox"
+    />
+  );
+}
+
 export function SelectField({
   children,
   className,
@@ -163,14 +218,9 @@ export function SelectField({
       <label className="ui-field__label" htmlFor={id}>
         {label}
       </label>
-      <select
-        {...props}
-        aria-describedby={descriptionId}
-        className="ui-select"
-        id={id}
-      >
+      <SelectControl {...props} aria-describedby={descriptionId} id={id}>
         {children}
-      </select>
+      </SelectControl>
       {hint && (
         <span className="ui-field__description" id={descriptionId}>
           {hint}

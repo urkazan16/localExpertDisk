@@ -9,6 +9,7 @@ import {
   scanLabels,
 } from "./state/scanState";
 import { useScanController } from "./state/useScanController";
+import { SelectControl } from "./ui/primitives";
 
 export { formatBytes, formatCount, isTerminal } from "./state/scanState";
 
@@ -73,7 +74,7 @@ export function ScanPanel({
       )}
       <form onSubmit={submit}>
         <label htmlFor="volume">Том</label>
-        <select
+        <SelectControl
           id="volume"
           value={
             volumes.some((volume) => volume.mount_point === root) ? root : ""
@@ -92,10 +93,11 @@ export function ScanPanel({
               {formatBytes(volume.total_bytes)}
             </option>
           ))}
-        </select>
+        </SelectControl>
         <label htmlFor="scan-root">Абсолютный путь к каталогу</label>
         <div className="path-row">
           <input
+            className="ui-input"
             id="scan-root"
             value={root}
             onChange={(event) => setRoot(event.target.value)}

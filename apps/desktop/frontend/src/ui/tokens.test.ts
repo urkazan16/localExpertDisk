@@ -6,6 +6,10 @@ function css(path: string) {
   return readFileSync(resolve(process.cwd(), "src", path), "utf8");
 }
 
+function source(path: string) {
+  return readFileSync(resolve(process.cwd(), "src", path), "utf8");
+}
+
 const appCss = css("styles.css");
 const previewCss = css("ui/preview.css");
 const tokenCss = css("ui/tokens.css");
@@ -113,11 +117,47 @@ describe("semantic design tokens", () => {
     expect(uiCss).toMatch(/\.ui-button:focus-visible/);
     expect(uiCss).toMatch(/\.ui-button:disabled/);
     expect(uiCss).toMatch(/\.ui-segmented__item\[aria-pressed="true"\]/);
+    expect(uiCss).toMatch(
+      /\.ui-select-shell \.ui-select\s*{[^}]*appearance:\s*none/s,
+    );
+    expect(uiCss).toMatch(/\.ui-checkbox\s*{[^}]*appearance:\s*none/s);
+    expect(uiCss).toMatch(
+      /\.ui-search:has\(\.ui-search__input:focus-visible\)/,
+    );
+    expect(uiCss).toMatch(/\.ui-input:disabled/);
 
     const smallHeight = Number.parseFloat(token("control-height-sm"));
     const mediumHeight = Number.parseFloat(token("control-height-md"));
+    const searchHeight = Number.parseFloat(token("control-height-search"));
     expect(smallHeight).toBeGreaterThanOrEqual(2);
     expect(mediumHeight).toBeGreaterThanOrEqual(2.5);
+    expect(searchHeight).toBeGreaterThanOrEqual(2.625);
+    expect(searchHeight).toBeLessThanOrEqual(2.875);
+    expect(token("control-background")).toBe("var(--color-background-subtle)");
+    expect(token("control-border-focus")).toBe("var(--color-border-focus)");
+  });
+
+  it("routes screen form controls through the shared primitives", () => {
+    const screens = [
+      "AnalyzerPanel.tsx",
+      "HistoryDuplicatesPanel.tsx",
+      "OldFilesPanel.tsx",
+      "ScanPanel.tsx",
+      "components/ColumnBrowser.tsx",
+    ];
+
+    for (const path of screens) {
+      const content = source(path);
+      expect(content, `${path} contains a raw select`).not.toMatch(/<select\b/);
+      expect(content, `${path} contains a raw checkbox`).not.toMatch(
+        /type="checkbox"/,
+      );
+      for (const input of content.matchAll(/<input\b[\s\S]*?\/>/g)) {
+        expect(input[0], `${path} contains an unstyled input`).toContain(
+          'className="ui-input"',
+        );
+      }
+    }
   });
 
   it("preserves desktop navigation and overflow behavior at the minimum window", () => {

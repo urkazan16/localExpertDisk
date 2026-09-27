@@ -3,10 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import { Icon } from "./icons";
 import {
   Button,
+  Checkbox,
   DialogSurface,
   IconButton,
   InlineAlert,
+  SearchField,
   SegmentedControl,
+  SelectControl,
   TextField,
 } from "./primitives";
 
@@ -62,6 +65,29 @@ describe("UI primitives", () => {
     const field = screen.getByRole("textbox", { name: "Каталог" });
     expect(field).toHaveAttribute("aria-invalid", "true");
     expect(field).toHaveAccessibleDescription("Каталог недоступен");
+  });
+
+  it("renders branded search, select, and checkbox controls with accessible names", () => {
+    render(
+      <>
+        <SearchField label="Поиск по имени" placeholder="Поиск" />
+        <SelectControl aria-label="Сортировка">
+          <option>Размер</option>
+        </SelectControl>
+        <Checkbox aria-label="Выбрать файл" />
+      </>,
+    );
+
+    expect(
+      screen.getByRole("searchbox", { name: "Поиск по имени" }),
+    ).toHaveClass("ui-search__input");
+    const select = screen.getByRole("combobox", { name: "Сортировка" });
+    expect(select).toHaveClass("ui-select");
+    expect(select.parentElement).toHaveClass("ui-select-shell");
+    expect(select.parentElement?.querySelector("svg")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Выбрать файл" })).toHaveClass(
+      "ui-checkbox",
+    );
   });
 
   it("uses an alert role only for an actionable error", () => {

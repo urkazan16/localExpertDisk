@@ -424,20 +424,34 @@ dd {
   font-size: 18px;
 }
 button {
-  color: var(--color-text-primary);
+  align-items: center;
+  appearance: none;
   background: var(--color-accent-primary);
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: 10px 16px;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--control-radius);
+  color: var(--color-text-primary);
+  display: inline-flex;
   font: inherit;
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  justify-content: center;
+  min-height: var(--control-height-md);
+  padding: 0 var(--control-padding-x);
   cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--motion-easing),
+    border-color var(--motion-fast) var(--motion-easing),
+    box-shadow var(--motion-fast) var(--motion-easing),
+    color var(--motion-fast) var(--motion-easing);
 }
-button:hover {
+button:hover:not(:disabled) {
   background: var(--color-accent-hover);
 }
 button:focus-visible {
-  outline: 3px solid var(--color-border-focus);
-  outline-offset: 3px;
+  border-color: var(--control-border-focus);
+  box-shadow: var(--control-focus-ring);
+  outline: none;
 }
 .next {
   display: flex;
@@ -539,21 +553,9 @@ footer {
   font-weight: 600;
   margin-top: 8px;
 }
-.scanner input,
-.scanner select {
+.scanner .ui-input,
+.scanner .ui-select-shell {
   width: 100%;
-  min-width: 0;
-  font: inherit;
-  color: inherit;
-  background: var(--color-background-subtle);
-  border: var(--border-width) solid var(--color-border-default);
-  border-radius: var(--radius-sm);
-  padding: 11px 12px;
-}
-.scanner input:focus-visible,
-.scanner select:focus-visible {
-  outline: 3px solid var(--color-border-focus);
-  outline-offset: 2px;
 }
 .path-row {
   display: flex;
@@ -565,14 +567,18 @@ footer {
 button:disabled,
 input:disabled,
 select:disabled {
-  opacity: 0.55;
   cursor: not-allowed;
+  opacity: 0.62;
 }
 button.secondary {
-  color: var(--color-text-primary);
-  background: var(--color-background-elevated);
-  border: var(--border-width) solid var(--color-border-default);
-  font-size: 13px;
+  background: var(--control-background-hover);
+  border-color: var(--control-border);
+  color: var(--control-text);
+  font-size: var(--font-size-sm);
+}
+button.secondary:hover:not(:disabled) {
+  background: var(--color-accent-subtle);
+  border-color: var(--control-border-hover);
 }
 .hint {
   font-size: 12px;
@@ -712,7 +718,7 @@ progress {
   background: var(--color-accent-selected);
   color: var(--color-text-primary);
 }
-.column-row input {
+.column-row .ui-checkbox {
   margin: 0;
 }
 .column-row__checkbox-placeholder {
@@ -967,14 +973,9 @@ button.breadcrumb:disabled {
   gap: 4px;
   margin-right: 6px;
 }
-.view-switcher select {
+.view-switcher .ui-select-shell {
   max-width: 100%;
   min-width: 176px;
-}
-.view-switcher button.active {
-  background: var(--color-accent-selected);
-  border-color: var(--color-accent-selected);
-  color: var(--color-text-primary);
 }
 .directory-treemap {
   display: flex;
@@ -1145,8 +1146,8 @@ button.treemap-tile:hover {
   font-size: 0.9rem;
 }
 
-.folder-sort select {
-  font: inherit;
+.folder-sort .ui-select-shell {
+  min-width: 15rem;
 }
 
 .selection-bar {
@@ -1171,12 +1172,10 @@ button.treemap-tile:hover {
   align-items: center;
   display: grid;
   gap: var(--space-2);
-  grid-template-columns: auto minmax(12rem, 22rem) auto;
+  grid-template-columns: minmax(14rem, 26rem) auto;
 }
-.analyzer-header-search label {
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+.analyzer-header-search .ui-search {
+  width: 100%;
 }
 .result-filters {
   align-items: end;
@@ -1191,6 +1190,10 @@ button.treemap-tile:hover {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   gap: var(--space-1);
+}
+.result-filters .ui-input,
+.result-filters .ui-select-shell {
+  min-width: 12rem;
 }
 .selection-action-bar {
   align-items: center;
@@ -1253,9 +1256,6 @@ button.treemap-tile:hover {
   }
   .analyzer-header-search {
     grid-template-columns: 1fr auto;
-  }
-  .analyzer-header-search label {
-    grid-column: 1 / -1;
   }
   .selection-action-bar__actions > * {
     flex: 1 1 auto;

@@ -89,8 +89,18 @@ async function saveEvidence(name, focusSelector = null) {
     document.querySelector(".app-sidebar")?.scrollTo(0, 0);
     const workspace = document.querySelector(".app-workspace");
     workspace?.scrollTo(0, 0);
-    if (selector)
-      document.querySelector(selector)?.scrollIntoView({ block: "start" });
+    if (selector) {
+      document.querySelector(selector)?.scrollIntoView({
+        block: "start",
+        inline: "nearest",
+      });
+      document.scrollingElement?.scrollTo({
+        left: 0,
+        top: 0,
+      });
+      window.scrollTo({ left: 0, top: 0 });
+      workspace?.scrollTo({ left: 0, top: workspace.scrollTop });
+    }
   }, focusSelector);
   await browser.saveScreenshot(join(evidenceDirectory, name));
 }
@@ -336,6 +346,7 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
 
       await (await waitForButton("Крупные файлы")).click();
       await (await waitForButton("Обновить выборку")).click();
+      await saveEvidence("05-large-files-controls.png", ".analyzer");
       await (await waitForButton("Категории")).click();
       await expect($("body")).toHaveText(
         expect.stringContaining("Обзор диска"),
@@ -357,6 +368,7 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
         searchFirstPageMs,
         thresholds.max_search_first_page_ms,
       );
+      await saveEvidence("06-search-controls.png", ".analyzer");
       await (await waitForButton("Структура")).click();
 
       const interactionFps = await measureInteractionFps(

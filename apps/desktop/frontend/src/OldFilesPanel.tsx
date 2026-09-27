@@ -13,7 +13,7 @@ import {
 import { errorMessage } from "./api/errors";
 import { formatBytes } from "./ScanPanel";
 import { SelectionActionBar } from "./components/SelectionActionBar";
-import { InlineAlert } from "./ui/primitives";
+import { Checkbox, InlineAlert, SelectControl } from "./ui/primitives";
 
 const periods = [
   [30, "Более 30 дней"],
@@ -204,7 +204,7 @@ export function OldFilesPanel({
           <p className="hint">Критерий: {criterionDescription}.</p>
           <label className="old-files-filter" htmlFor="old-files-criterion">
             Критерий времени
-            <select
+            <SelectControl
               id="old-files-criterion"
               value={criterion}
               onChange={(event) => {
@@ -221,7 +221,7 @@ export function OldFilesPanel({
                   {label}
                 </option>
               ))}
-            </select>
+            </SelectControl>
           </label>
           {criterion === "accessed" && (
             <p className="hint">
@@ -232,7 +232,7 @@ export function OldFilesPanel({
           )}
           <label className="old-files-filter" htmlFor="old-files-period">
             Период
-            <select
+            <SelectControl
               id="old-files-period"
               value={period}
               onChange={(event) => {
@@ -249,12 +249,13 @@ export function OldFilesPanel({
                 </option>
               ))}
               <option value="custom">Указать дату</option>
-            </select>
+            </SelectControl>
           </label>
           {period === "custom" && (
             <label className="old-files-filter" htmlFor="old-files-date">
               Дата
               <input
+                className="ui-input"
                 id="old-files-date"
                 type="date"
                 value={customDate}
@@ -270,6 +271,7 @@ export function OldFilesPanel({
           <label className="old-files-filter" htmlFor="old-files-min-size">
             Минимальный размер, МиБ
             <input
+              className="ui-input"
               id="old-files-min-size"
               type="number"
               min="0"
@@ -309,11 +311,10 @@ export function OldFilesPanel({
               <ul className="old-files-list" aria-label="Старые файлы">
                 {result.items.map(({ entry, timestamp_ms }) => (
                   <li key={entry.id}>
-                    <input
+                    <Checkbox
                       aria-label={`Выбрать ${entry.name || entry.path}`}
                       checked={selected.some((item) => item.id === entry.id)}
                       onChange={() => toggleSelection(entry)}
-                      type="checkbox"
                     />
                     <div>
                       <strong>{entry.name || entry.path}</strong>
