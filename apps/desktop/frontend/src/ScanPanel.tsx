@@ -9,7 +9,7 @@ import {
   scanLabels,
 } from "./state/scanState";
 import { useScanController } from "./state/useScanController";
-import { SelectControl } from "./ui/primitives";
+import { Button, SelectControl } from "./ui/primitives";
 
 export { formatBytes, formatCount, isTerminal } from "./state/scanState";
 
@@ -49,13 +49,13 @@ export function ScanPanel({
     <section className="panel scanner" aria-labelledby="scan-title">
       <div className="panel-heading">
         <h2 id="scan-title">Сканирование диска</h2>
-        <button
-          className="secondary"
+        <Button
           disabled={!enabled || loading || busy}
           onClick={reload}
+          variant="secondary"
         >
           Обновить
-        </button>
+        </Button>
       </div>
       {!enabled && (
         <p className="hint">Для сканирования откройте настольное приложение.</p>
@@ -75,25 +75,25 @@ export function ScanPanel({
       <form onSubmit={submit}>
         <label htmlFor="volume">Том</label>
         <SelectControl
+          aria-label="Том"
           id="volume"
           value={
             volumes.some((volume) => volume.mount_point === root) ? root : ""
           }
           disabled={!enabled || busy || volumes.length === 0}
-          onChange={(event) => setRoot(event.target.value)}
-        >
-          <option value="">Выберите том или укажите каталог ниже</option>
-          {volumes.map((volume, index) => (
-            <option
-              key={`${volume.mount_point}-${index}`}
-              value={volume.mount_point ?? ""}
-              disabled={!volume.mount_point}
-            >
-              {volume.name || volume.mount_point} · {volume.filesystem} ·{" "}
-              {formatBytes(volume.total_bytes)}
-            </option>
-          ))}
-        </SelectControl>
+          onValueChange={setRoot}
+          options={[
+            {
+              value: "",
+              label: "Выберите том или укажите каталог ниже",
+            },
+            ...volumes.map((volume) => ({
+              disabled: !volume.mount_point,
+              label: `${volume.name || volume.mount_point} · ${volume.filesystem} · ${formatBytes(volume.total_bytes)}`,
+              value: volume.mount_point ?? "",
+            })),
+          ]}
+        />
         <label htmlFor="scan-root">Абсолютный путь к каталогу</label>
         <div className="path-row">
           <input
@@ -108,12 +108,12 @@ export function ScanPanel({
             aria-describedby="scan-help"
             spellCheck={false}
           />
-          <button
+          <Button
             type="submit"
             disabled={!enabled || loading || busy || root.length === 0}
           >
             {starting ? "Запуск…" : "Сканировать"}
-          </button>
+          </Button>
         </div>
         <p id="scan-help" className="hint">
           Читаем только метаданные. Ссылки не обходим, файлы не изменяем. Папка
@@ -126,15 +126,15 @@ export function ScanPanel({
           <div className="panel-heading">
             <h3 aria-live="polite">{scanLabels[scan.state]}</h3>
             {!isTerminal(scan) && (
-              <button
-                className="secondary"
+              <Button
                 onClick={() => void cancel()}
                 disabled={cancelling || scan.state === "cancelling"}
+                variant="secondary"
               >
                 {cancelling || scan.state === "cancelling"
                   ? "Отмена…"
                   : "Отменить"}
-              </button>
+              </Button>
             )}
           </div>
           <p className="scan-path" title={scan.root_path}>
@@ -160,19 +160,19 @@ export function ScanPanel({
           )}
           <ScanMetrics scan={scan} />
           {isTerminal(scan) && BigInt(scan.errors_count) > 0n && (
-            <button
-              className="secondary"
+            <Button
               disabled={
                 issueLoading || Boolean(issuePage && !issuePage.next_cursor)
               }
               onClick={() => void loadIssues()}
+              variant="secondary"
             >
               {issueLoading
                 ? "Загрузка…"
                 : issuePage
                   ? "Следующие ошибки"
                   : "Показать ошибки"}
-            </button>
+            </Button>
           )}
           {issuePage && (
             <ul className="issues">

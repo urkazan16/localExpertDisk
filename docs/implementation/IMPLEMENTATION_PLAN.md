@@ -3681,14 +3681,14 @@ Column Browser, Sunburst и Treemap не перепроектировались.
 | --- | --- |
 | Design tokens | Размеры, радиусы, отступы, цвета, состояния, focus ring, motion и checkbox собраны в `apps/desktop/frontend/src/ui/tokens.css`. Compact/default/search/primary имеют высоты 32/38/44/56 px. |
 | Input и Path Input | Общие `TextField` и `.ui-input`; hover, focus, disabled, invalid и placeholder используют semantic tokens. Поле пути и соседняя кнопка имеют согласованную default-высоту. |
-| Search | `SearchField` объединяет native search semantics, собственную иконку и theme surface. Сохраняется submit-кнопка, потому что поиск выполняется явным IPC-запросом; `Cmd+F`/`Ctrl+F` и focus сохраняются. |
-| Select | Все экранные select проходят через `SelectControl`: `appearance: none`, единая оболочка и собственный chevron. Используется для метрики размера, сортировки, категорий, истории и других фильтров. Popup остаётся системным доступным списком WebView; закрытый контрол не имеет native bevel/arrow. |
+| Search | `SearchField` объединяет search semantics, собственные search/clear icons и theme surface. Сохраняется styled submit-кнопка, потому что поиск выполняется явным IPC-запросом; `Cmd+F`/`Ctrl+F` и focus сохраняются. |
+| Select и Popover | Native `<select>` удалён из продуктовых экранов. Controlled `SelectControl` состоит из combobox trigger и общего popover/listbox surface; options имеют selected/active/disabled states. Поддерживаются Enter, Space, Arrow Up/Down, Home, End, Esc и Tab, `aria-expanded`, `aria-controls`, `aria-activedescendant`, `role=listbox/option`. |
 | Checkbox | Все экранные checkbox проходят через `Checkbox`; размер 18 px, собственные checked/hover/focus/disabled states. |
-| Buttons | Обычные действия используют общие primary/secondary/ghost/danger variants и semantic states. Специализированные sidebar, breadcrumb, treemap и sunburst buttons сохраняют нативную button-семантику и собственную геометрию, но используют те же tokens и видимый focus. |
-| Segmented controls | Режимы результатов и Treemap/Sunburst используют один `SegmentedControl` с `aria-pressed`; compact item height — 32 px. |
+| Buttons | Обычные действия используют общие primary/secondary/ghost/danger/disclosure variants и semantic states. `Breadcrumb`/`BreadcrumbItem` вынесены в UI layer. Специализированные sidebar, treemap и sunburst buttons сохраняют нативную button-семантику и собственную геометрию, но используют те же tokens и видимый focus. |
+| Segmented controls | Режимы результатов и Treemap/Sunburst используют один `SegmentedControl` с `aria-pressed`; полная высота — 36 px. |
 | Typography и numbers | Системный sans-serif сохранён; control text — 14 px. Размеры файлов используют tabular numerals и правое выравнивание в строках. |
-| File rows и scrollbars | Строка Column Browser — 40 px; hover, selected, active и keyboard focus различимы. Scrollbars сохраняют platform behavior и получают неброскую tokenized стилизацию там, где её поддерживает WebView. |
-| Bottom Action Bar | `SelectionActionBar` использует общие button variants, tokenized surface/border и стабильные disabled states. |
+| File rows и scrollbars | Column Browser использует колонки 256 px, строки 50 px и file/folder icons 20 px; hover, selected, active и keyboard focus различимы. Scrollbars получают неброскую tokenized стилизацию там, где её поддерживает WebView. |
+| Bottom Action Bar | `SelectionActionBar` имеет минимальную высоту 64 px, использует общие button variants, tokenized surface/border и стабильные disabled states. |
 
 Автоматические ограничения находятся в `ui/tokens.test.ts` и
 `ui/primitives.test.tsx`: они запрещают raw colors вне token source, проверяют
@@ -3704,10 +3704,11 @@ docs/evidence/ui-form-controls-polish/03-nested-directory.png
 docs/evidence/ui-form-controls-polish/04-selection-review.png
 docs/evidence/ui-form-controls-polish/05-large-files-controls.png
 docs/evidence/ui-form-controls-polish/06-search-controls.png
+docs/evidence/ui-form-controls-polish/07-custom-select-popup.png
 ```
 
 Осознанно сохранённые различия с reference: продуктовые названия и состав
 действий Local Expert Disk, отсутствие коммерческого блока MacCleaner,
-структура уже принятого AppShell и системный popup нативного `<select>`.
-Последний сохраняет accessibility и keyboard navigation; внешний закрытый
-контрол, chevron и все его состояния полностью задаются дизайн-системой.
+структура уже принятого AppShell и иная геометрия собственных визуализаций.
+Scanner, storage, filesystem, IPC, scan lifecycle и модели Sunburst/Treemap
+этим этапом не изменяются.

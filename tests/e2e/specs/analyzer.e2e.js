@@ -344,6 +344,29 @@ describe(`desktop analyzer workflow: ${phase}`, () => {
       await runScan("Сканирование завершено", true);
       await saveEvidence("02-structure-result.png", ".structure-workspace");
 
+      const folderSort = await $(
+        '[role="combobox"][aria-label="Сортировка содержимого каталога"]',
+      );
+      const folderSortListboxSelector =
+        '[role="listbox"][aria-label="Сортировка содержимого каталога"]';
+      await folderSort.click();
+      await $(folderSortListboxSelector).waitForDisplayed();
+      await saveEvidence("07-custom-select-popup.png", ".structure-workspace");
+      await browser.execute((selector) => {
+        document.querySelector(selector)?.focus();
+      }, folderSortListboxSelector);
+      await browser.keys(["ArrowDown", "Enter"]);
+      await expect(folderSort).toHaveText(expect.stringContaining("Имя: А–Я"));
+      await folderSort.click();
+      await $(folderSortListboxSelector).waitForDisplayed();
+      await browser.execute((selector) => {
+        document.querySelector(selector)?.focus();
+      }, folderSortListboxSelector);
+      await browser.keys(["ArrowUp", "Enter"]);
+      await expect(folderSort).toHaveText(
+        expect.stringContaining("Размер: больше сначала"),
+      );
+
       await (await waitForButton("Крупные файлы")).click();
       await (await waitForButton("Обновить выборку")).click();
       await saveEvidence("05-large-files-controls.png", ".analyzer");

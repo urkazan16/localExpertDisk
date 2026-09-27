@@ -78,10 +78,14 @@
   --shadow-md: 0 12px 32px rgb(0 13 23 / 32%);
   --shadow-focus: 0 0 0 3px rgb(102 194 255 / 32%);
 
-  --control-height-sm: 2rem;
-  --control-height-md: 2.375rem;
+  --control-height-compact: 2rem;
+  --control-height-default: 2.375rem;
+  --control-height-segmented: 2.25rem;
   --control-height-search: 2.75rem;
-  --control-height-lg: 3.5rem;
+  --control-height-primary: 3.5rem;
+  --control-height-sm: var(--control-height-compact);
+  --control-height-md: var(--control-height-default);
+  --control-height-lg: var(--control-height-primary);
   --control-radius-compact: 0.5rem;
   --control-radius: 0.625rem;
   --control-radius-search: 0.875rem;
@@ -107,8 +111,11 @@
   --scrollbar-size: 0.625rem;
   --scrollbar-thumb: var(--color-border-strong);
   --scrollbar-thumb-hover: var(--color-border-focus);
-  --row-height-compact: 2.5rem;
-  --row-height-comfortable: 3rem;
+  --row-height-column: 3.125rem;
+  --row-height-detail: 4.75rem;
+  --row-height-compact: var(--row-height-column);
+  --row-height-comfortable: var(--row-height-detail);
+  --column-width: 16rem;
   --sidebar-width: 17.5rem;
   --sidebar-width-collapsed: 4.5rem;
 

@@ -16,6 +16,11 @@ vi.mock("./api/generated", () => ({
   revealEntry: vi.fn(),
 }));
 
+function chooseSelectOption(label: string, option: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: label }));
+  fireEvent.mouseDown(screen.getByRole("option", { name: option }));
+}
+
 const scan: ScanSession = {
   id: "7",
   root_path: "/fixture",
@@ -102,12 +107,8 @@ describe("Old files UI", () => {
 
   it("uses the selected timestamp criterion and a custom date", async () => {
     render(<OldFilesPanel enabled scan={scan} />);
-    fireEvent.change(screen.getByLabelText("Критерий времени"), {
-      target: { value: "created" },
-    });
-    fireEvent.change(screen.getByLabelText("Период"), {
-      target: { value: "custom" },
-    });
+    chooseSelectOption("Критерий времени", "Дата создания");
+    chooseSelectOption("Период", "Указать дату");
     const button = screen.getByRole("button", { name: "Показать файлы" });
     expect(button).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Дата"), {

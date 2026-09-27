@@ -83,6 +83,11 @@ async function findExplorerOption(name: string) {
   return option as HTMLElement;
 }
 
+function chooseSelectOption(label: string, option: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: label }));
+  fireEvent.mouseDown(screen.getByRole("option", { name: option }));
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(getScanRoot).mockResolvedValue(root);
@@ -160,9 +165,7 @@ describe("Analyzer UI", () => {
     });
     render(<AnalyzerPanel enabled scan={scan} />);
     await findInExplorer("Яблоко");
-    fireEvent.change(screen.getByLabelText("Сортировка содержимого каталога"), {
-      target: { value: "name_asc" },
-    });
+    chooseSelectOption("Сортировка содержимого каталога", "Имя: А–Я");
     expect(
       within(
         screen.getByRole("listbox", {
@@ -863,9 +866,7 @@ describe("Analyzer UI", () => {
     };
     render(<AnalyzerPanel enabled scan={scanWithAllocation} />);
     await waitFor(() => expect(getDirectoryMap).toHaveBeenCalled());
-    fireEvent.change(screen.getByLabelText("Метрика карты каталогов"), {
-      target: { value: "unique_allocated" },
-    });
+    chooseSelectOption("Метрика карты каталогов", "Уникально на диске");
     await waitFor(() =>
       expect(getDirectoryMap).toHaveBeenLastCalledWith(
         "7",

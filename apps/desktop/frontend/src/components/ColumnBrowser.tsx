@@ -9,9 +9,9 @@ import type { IndexedEntry } from "../api/generated";
 import { formatBytes } from "../ScanPanel";
 import type { DirectoryColumn, FolderSort } from "../state/analyzerState";
 import { Icon } from "../ui/icons";
-import { Checkbox } from "../ui/primitives";
+import { Button, Checkbox } from "../ui/primitives";
 
-export const COLUMN_ROW_HEIGHT_PX = 40;
+export const COLUMN_ROW_HEIGHT_PX = 50;
 const VIEWPORT_HEIGHT = 420;
 const VIRTUAL_THRESHOLD = 40;
 const OVERSCAN = 5;
@@ -193,7 +193,7 @@ function Column({
         ) : (
           <span className="column-row__checkbox-placeholder" />
         )}
-        <Icon name={entry.kind === "directory" ? "folder" : "file"} size={17} />
+        <Icon name={entry.kind === "directory" ? "folder" : "file"} size={20} />
         <span className="column-row__name" title={entry.path}>
           {entry.name || entry.path}
         </span>
@@ -264,13 +264,14 @@ function Column({
         )}
       </div>
       {column.page?.next_cursor && (
-        <button
-          className="directory-column__next secondary"
+        <Button
+          className="directory-column__next"
           disabled={column.loading}
           onClick={() => onLoadNext(columnIndex)}
+          variant="secondary"
         >
           {column.loading ? "Загрузка…" : "Следующая страница"}
-        </button>
+        </Button>
       )}
     </section>
   );

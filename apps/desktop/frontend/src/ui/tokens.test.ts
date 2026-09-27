@@ -117,27 +117,32 @@ describe("semantic design tokens", () => {
     expect(uiCss).toMatch(/\.ui-button:focus-visible/);
     expect(uiCss).toMatch(/\.ui-button:disabled/);
     expect(uiCss).toMatch(/\.ui-segmented__item\[aria-pressed="true"\]/);
-    expect(uiCss).toMatch(
-      /\.ui-select-shell \.ui-select\s*{[^}]*appearance:\s*none/s,
-    );
+    expect(uiCss).toMatch(/\.ui-select__trigger\s*{/);
+    expect(uiCss).toMatch(/\.ui-select__listbox\s*{/);
+    expect(uiCss).toMatch(/\.ui-select__option\[aria-selected="true"\]/);
     expect(uiCss).toMatch(/\.ui-checkbox\s*{[^}]*appearance:\s*none/s);
     expect(uiCss).toMatch(
       /\.ui-search:has\(\.ui-search__input:focus-visible\)/,
     );
     expect(uiCss).toMatch(/\.ui-input:disabled/);
 
-    const smallHeight = Number.parseFloat(token("control-height-sm"));
-    const mediumHeight = Number.parseFloat(token("control-height-md"));
+    const smallHeight = Number.parseFloat(token("control-height-compact"));
+    const mediumHeight = Number.parseFloat(token("control-height-default"));
+    const segmentedHeight = Number.parseFloat(
+      token("control-height-segmented"),
+    );
     const searchHeight = Number.parseFloat(token("control-height-search"));
     expect(smallHeight).toBe(2);
     expect(mediumHeight).toBeGreaterThanOrEqual(2.25);
     expect(mediumHeight).toBeLessThanOrEqual(2.5);
+    expect(segmentedHeight).toBe(2.25);
     expect(searchHeight).toBeGreaterThanOrEqual(2.625);
     expect(searchHeight).toBeLessThanOrEqual(2.875);
     expect(token("font-size-control")).toBe("0.875rem");
     expect(token("checkbox-size")).toBe("1.125rem");
     expect(token("scrollbar-size")).toBe("0.625rem");
-    expect(token("row-height-compact")).toBe("2.5rem");
+    expect(token("row-height-column")).toBe("3.125rem");
+    expect(token("column-width")).toBe("16rem");
     expect(token("control-background")).toBe("var(--color-background-subtle)");
     expect(token("control-border-focus")).toBe("var(--color-border-focus)");
   });
@@ -156,6 +161,9 @@ describe("semantic design tokens", () => {
       expect(content, `${path} contains a raw select`).not.toMatch(/<select\b/);
       expect(content, `${path} contains a raw checkbox`).not.toMatch(
         /type="checkbox"/,
+      );
+      expect(content, `${path} contains a legacy secondary button`).not.toMatch(
+        /<button\b[^>]*className="[^"]*secondary/,
       );
       for (const input of content.matchAll(/<input\b[\s\S]*?\/>/g)) {
         expect(input[0], `${path} contains an unstyled input`).toContain(

@@ -26,7 +26,7 @@ import {
 } from "./api/generated";
 import { errorMessage } from "./api/errors";
 import { formatBytes } from "./ScanPanel";
-import { Checkbox, SelectControl } from "./ui/primitives";
+import { Button, Checkbox, SelectControl } from "./ui/primitives";
 
 export function HistoryDuplicatesPanel({
   enabled,
@@ -328,25 +328,21 @@ export function HistoryDuplicatesPanel({
                 Хранить последних
                 <SelectControl
                   aria-label="Количество сохраняемых сканирований"
+                  onValueChange={(value) => void updateRetention(value)}
+                  options={[5, 10, 25, 50].map((value) => ({
+                    value,
+                    label: String(value),
+                  }))}
                   value={retention}
-                  onChange={(event) =>
-                    void updateRetention(Number(event.target.value))
-                  }
-                >
-                  {[5, 10, 25, 50].map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </SelectControl>
+                />
               </label>
-              <button
-                className="secondary"
+              <Button
                 disabled={historyLoading}
                 onClick={() => void cleanupHistory()}
+                variant="secondary"
               >
                 Очистить старые
-              </button>
+              </Button>
             </div>
           </div>
           {history?.items.map((scan) => {
@@ -372,40 +368,42 @@ export function HistoryDuplicatesPanel({
                 </label>
                 <div className="history-actions">
                   {readableHistoryState(scan) && onOpenScan && (
-                    <button
-                      className="secondary"
+                    <Button
                       onClick={() => onOpenScan(scan)}
+                      size="small"
+                      variant="secondary"
                     >
                       Открыть анализ
-                    </button>
+                    </Button>
                   )}
-                  <button
-                    className="secondary"
+                  <Button
                     disabled={active || !scan.finished_at_ms}
                     onClick={() => void removeHistory(scan.id)}
+                    size="small"
+                    variant="secondary"
                   >
                     Удалить из истории
-                  </button>
+                  </Button>
                 </div>
               </div>
             );
           })}
           {history?.next_cursor && (
-            <button
-              className="secondary"
+            <Button
               disabled={historyLoading}
               onClick={() => void loadHistory(history.next_cursor)}
+              variant="secondary"
             >
               Показать более старые
-            </button>
+            </Button>
           )}
-          <button
-            className="secondary"
+          <Button
             disabled={selectedScans.length !== 2}
             onClick={() => void compareSelected()}
+            variant="secondary"
           >
             Сравнить выбранные
-          </button>
+          </Button>
           {comparison && <ComparisonDetails comparison={comparison} />}
         </section>
       )}
@@ -418,20 +416,17 @@ export function HistoryDuplicatesPanel({
                 В каждой группе необходимо оставить хотя бы один файл.
               </p>
             </div>
-            <button
-              className="secondary"
+            <Button
               disabled={duplicateLoading}
               onClick={() => void verifyDuplicates()}
+              variant="secondary"
             >
               {duplicateLoading ? "Проверяем…" : "Проверить содержимое"}
-            </button>
+            </Button>
             {duplicateLoading && hashProgress && (
-              <button
-                className="secondary"
-                onClick={() => void cancelHashing()}
-              >
+              <Button onClick={() => void cancelHashing()} variant="secondary">
                 Остановить проверку
-              </button>
+              </Button>
             )}
           </div>
           {hashProgress && (
@@ -469,15 +464,16 @@ export function HistoryDuplicatesPanel({
                       className="duplicate-group"
                       key={group.content_hash}
                     >
-                      <button
-                        className="duplicate-group-toggle secondary"
+                      <Button
+                        className="duplicate-group-toggle"
                         aria-expanded={Boolean(page)}
                         onClick={() => void toggleGroup(group.content_hash)}
+                        variant="disclosure"
                       >
                         {formatBytes(group.size)} · {group.files_count} файлов ·
                         можно освободить до{" "}
                         {formatBytes(group.reclaimable_size)}
-                      </button>
+                      </Button>
                       {page && (
                         <div className="duplicate-files">
                           {page.items.map((entry) => {
@@ -498,14 +494,14 @@ export function HistoryDuplicatesPanel({
                             );
                           })}
                           {page.next_cursor && (
-                            <button
-                              className="secondary"
+                            <Button
                               onClick={() =>
                                 void loadMoreFiles(group.content_hash)
                               }
+                              variant="secondary"
                             >
                               Показать остальные файлы группы
-                            </button>
+                            </Button>
                           )}
                         </div>
                       )}
@@ -517,41 +513,43 @@ export function HistoryDuplicatesPanel({
               <p className="hint">Подтверждённых групп дубликатов нет.</p>
             ))}
           {duplicates?.next_cursor && (
-            <button
-              className="secondary"
+            <Button
               disabled={duplicateLoading}
               onClick={() => void loadNextDuplicatePage()}
+              variant="secondary"
             >
               Показать следующие группы
-            </button>
+            </Button>
           )}
           {selectedEntries.size > 0 && (
             <div className="duplicate-delete-actions">
               {!confirmDelete ? (
-                <button
+                <Button
                   disabled={!trash || duplicateLoading}
                   onClick={() => setConfirmDelete(true)}
+                  variant="danger"
                 >
                   Переместить выбранные в корзину ({selectedEntries.size})
-                </button>
+                </Button>
               ) : (
                 <>
                   <p role="alert">
                     Файлы будут перемещены в системную корзину после повторной
                     проверки.
                   </p>
-                  <button
+                  <Button
                     disabled={duplicateLoading}
                     onClick={() => void deleteSelectedDuplicates()}
+                    variant="danger"
                   >
                     Подтвердить перемещение
-                  </button>
-                  <button
-                    className="secondary"
+                  </Button>
+                  <Button
                     onClick={() => setConfirmDelete(false)}
+                    variant="secondary"
                   >
                     Отмена
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
@@ -695,13 +693,13 @@ function ComparisonList({
             ))}
           </ul>
           {page?.next_cursor && (
-            <button
-              className="secondary"
+            <Button
               disabled={loading}
               onClick={() => void loadMore()}
+              variant="secondary"
             >
               Показать ещё
-            </button>
+            </Button>
           )}
         </>
       ) : loading ? (

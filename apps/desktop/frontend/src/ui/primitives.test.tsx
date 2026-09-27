@@ -68,12 +68,26 @@ describe("UI primitives", () => {
   });
 
   it("renders branded search, select, and checkbox controls with accessible names", () => {
+    const onValueChange = vi.fn();
+    const onClear = vi.fn();
     render(
       <>
-        <SearchField label="Поиск по имени" placeholder="Поиск" />
-        <SelectControl aria-label="Сортировка">
-          <option>Размер</option>
-        </SelectControl>
+        <SearchField
+          label="Поиск по имени"
+          onClear={onClear}
+          placeholder="Поиск"
+          readOnly
+          value="report"
+        />
+        <SelectControl
+          aria-label="Сортировка"
+          onValueChange={onValueChange}
+          options={[
+            { value: "size", label: "Размер" },
+            { value: "name", label: "Имя" },
+          ]}
+          value="size"
+        />
         <Checkbox aria-label="Выбрать файл" />
       </>,
     );
@@ -81,12 +95,64 @@ describe("UI primitives", () => {
     expect(
       screen.getByRole("searchbox", { name: "Поиск по имени" }),
     ).toHaveClass("ui-search__input");
+    fireEvent.click(screen.getByRole("button", { name: "Очистить поиск" }));
+    expect(onClear).toHaveBeenCalledOnce();
     const select = screen.getByRole("combobox", { name: "Сортировка" });
-    expect(select).toHaveClass("ui-select");
-    expect(select.parentElement).toHaveClass("ui-select-shell");
-    expect(select.parentElement?.querySelector("svg")).toBeInTheDocument();
+    expect(select).toHaveClass("ui-select__trigger");
+    expect(select).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(select);
+    expect(select).toHaveAttribute("aria-expanded", "true");
+    fireEvent.mouseDown(screen.getByRole("option", { name: "Имя" }));
+    expect(onValueChange).toHaveBeenCalledWith("name");
     expect(screen.getByRole("checkbox", { name: "Выбрать файл" })).toHaveClass(
       "ui-checkbox",
+    );
+  });
+
+  it("supports complete keyboard navigation for the custom select", async () => {
+    const onValueChange = vi.fn();
+    render(
+      <>
+        <button>До списка</button>
+        <SelectControl
+          aria-label="Метрика"
+          onValueChange={onValueChange}
+          options={[
+            { value: "logical", label: "Логический" },
+            { value: "allocated", label: "На диске", disabled: true },
+            { value: "unique", label: "Уникальный" },
+          ]}
+          value="logical"
+        />
+        <button>После списка</button>
+      </>,
+    );
+    const trigger = screen.getByRole("combobox", { name: "Метрика" });
+    fireEvent.keyDown(trigger, { key: "End" });
+    const listbox = screen.getByRole("listbox", { name: "Метрика" });
+    expect(listbox).toHaveAttribute(
+      "aria-activedescendant",
+      expect.stringContaining("option-2"),
+    );
+    fireEvent.keyDown(listbox, { key: "ArrowDown" });
+    expect(listbox).toHaveAttribute(
+      "aria-activedescendant",
+      expect.stringContaining("option-0"),
+    );
+    fireEvent.keyDown(listbox, { key: "Home" });
+    fireEvent.keyDown(listbox, { key: "ArrowUp" });
+    fireEvent.keyDown(listbox, { key: "Enter" });
+    expect(onValueChange).toHaveBeenCalledWith("unique");
+    fireEvent.keyDown(trigger, { key: " " });
+    fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    fireEvent.keyDown(screen.getByRole("listbox"), { key: "Tab" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "После списка" }),
+      ).toHaveFocus(),
     );
   });
 

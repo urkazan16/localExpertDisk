@@ -2,12 +2,13 @@ import {
   useEffect,
   useId,
   useRef,
+  useState,
   type ButtonHTMLAttributes,
   type ComponentPropsWithRef,
   type HTMLAttributes,
   type InputHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
-  type SelectHTMLAttributes,
 } from "react";
 import { Icon, type IconName } from "./icons";
 
@@ -28,7 +29,7 @@ export function Button({
   icon?: IconName;
   loading?: boolean;
   size?: "small" | "medium" | "large";
-  variant?: "primary" | "secondary" | "ghost" | "danger";
+  variant?: "primary" | "secondary" | "ghost" | "danger" | "disclosure";
 }) {
   return (
     <button
@@ -103,6 +104,44 @@ export function SegmentedControl<T extends string>({
   );
 }
 
+export function Breadcrumb({
+  children,
+  label,
+}: {
+  children: ReactNode;
+  label: string;
+}) {
+  return (
+    <nav aria-label={label} className="ui-breadcrumb">
+      <ol>{children}</ol>
+    </nav>
+  );
+}
+
+export function BreadcrumbItem({
+  children,
+  current = false,
+  onClick,
+}: {
+  children: ReactNode;
+  current?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <li>
+      <button
+        aria-current={current ? "page" : undefined}
+        className="ui-breadcrumb__item"
+        disabled={current}
+        onClick={onClick}
+        type="button"
+      >
+        {children}
+      </button>
+    </li>
+  );
+}
+
 export function TextField({
   className,
   error,
@@ -149,16 +188,21 @@ export function SearchField({
   className,
   id: providedId,
   label,
+  onClear,
   ref,
   ...props
 }: ComponentPropsWithRef<"input"> & {
   label: string;
+  onClear?: () => void;
 }) {
   const generatedId = useId();
   const id = providedId ?? generatedId;
+  const hasValue = String(props.value ?? props.defaultValue ?? "").length > 0;
   return (
-    <label className={classes("ui-search", className)} htmlFor={id}>
-      <span className="ui-visually-hidden">{label}</span>
+    <div className={classes("ui-search", className)}>
+      <label className="ui-visually-hidden" htmlFor={id}>
+        {label}
+      </label>
       <Icon aria-hidden="true" name="search" />
       <input
         {...props}
@@ -167,22 +211,232 @@ export function SearchField({
         ref={ref}
         type="search"
       />
-    </label>
+      {onClear && hasValue && (
+        <IconButton
+          className="ui-search__clear"
+          icon="close"
+          label="Очистить поиск"
+          onClick={onClear}
+          onMouseDown={(event) => event.preventDefault()}
+          type="button"
+        />
+      )}
+    </div>
   );
 }
 
-export function SelectControl({
-  children,
+export type SelectValue = string | number;
+
+export type SelectOption<T extends SelectValue> = {
+  disabled?: boolean;
+  label: string;
+  value: T;
+};
+
+export function SelectControl<T extends SelectValue>({
+  "aria-describedby": ariaDescribedBy,
+  "aria-label": ariaLabel,
   className,
-  ...props
-}: SelectHTMLAttributes<HTMLSelectElement>) {
+  disabled = false,
+  id: providedId,
+  onValueChange,
+  options,
+  value,
+}: {
+  "aria-describedby"?: string;
+  "aria-label": string;
+  className?: string;
+  disabled?: boolean;
+  id?: string;
+  onValueChange: (value: T) => void;
+  options: ReadonlyArray<SelectOption<T>>;
+  value: T;
+}) {
+  const generatedId = useId();
+  const id = providedId ?? generatedId;
+  const listboxId = `${id}-listbox`;
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listboxRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const selectedIndex = options.findIndex((option) => option.value === value);
+  const [activeIndex, setActiveIndex] = useState(
+    selectedIndex >= 0 ? selectedIndex : 0,
+  );
+  const enabledIndexes = options
+    .map((option, index) => (option.disabled ? -1 : index))
+    .filter((index) => index >= 0);
+  const selected = options[selectedIndex];
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => listboxRef.current?.focus());
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
+  function openAt(index: number) {
+    if (disabled || enabledIndexes.length === 0) return;
+    setActiveIndex(index);
+    setOpen(true);
+  }
+
+  function moveActive(delta: number) {
+    if (enabledIndexes.length === 0) return;
+    const current = enabledIndexes.indexOf(activeIndex);
+    const next =
+      current < 0
+        ? 0
+        : (current + delta + enabledIndexes.length) % enabledIndexes.length;
+    setActiveIndex(enabledIndexes[next]);
+  }
+
+  function choose(index: number) {
+    const option = options[index];
+    if (!option || option.disabled) return;
+    onValueChange(option.value);
+    setOpen(false);
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  }
+
+  function continueTabNavigation(backward: boolean) {
+    const focusable = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        "button:not(:disabled), input:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex='-1'])",
+      ),
+    );
+    const triggerIndex = triggerRef.current
+      ? focusable.indexOf(triggerRef.current)
+      : -1;
+    const next =
+      triggerIndex < 0
+        ? null
+        : (focusable[triggerIndex + (backward ? -1 : 1)] ?? null);
+    setOpen(false);
+    requestAnimationFrame(() => next?.focus());
+  }
+
+  function handleTriggerKeyDown(event: ReactKeyboardEvent) {
+    if (disabled) return;
+    if (
+      ["Enter", " ", "ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)
+    )
+      event.preventDefault();
+    if (event.key === "ArrowDown")
+      openAt(
+        enabledIndexes[
+          Math.max(0, enabledIndexes.indexOf(selectedIndex) + 1)
+        ] ?? enabledIndexes[0],
+      );
+    else if (event.key === "ArrowUp") {
+      const current = enabledIndexes.indexOf(selectedIndex);
+      openAt(
+        enabledIndexes[current > 0 ? current - 1 : enabledIndexes.length - 1],
+      );
+    } else if (event.key === "Home") openAt(enabledIndexes[0]);
+    else if (event.key === "End") openAt(enabledIndexes.at(-1) ?? 0);
+    else if (event.key === "Enter" || event.key === " ")
+      openAt(selectedIndex >= 0 ? selectedIndex : (enabledIndexes[0] ?? 0));
+  }
+
+  function handleListboxKeyDown(event: ReactKeyboardEvent) {
+    if (event.key === "Tab") {
+      event.preventDefault();
+      continueTabNavigation(event.shiftKey);
+      return;
+    }
+    if (
+      ["ArrowDown", "ArrowUp", "Home", "End", "Enter", " ", "Escape"].includes(
+        event.key,
+      )
+    )
+      event.preventDefault();
+    if (event.key === "ArrowDown") moveActive(1);
+    else if (event.key === "ArrowUp") moveActive(-1);
+    else if (event.key === "Home") setActiveIndex(enabledIndexes[0] ?? 0);
+    else if (event.key === "End") setActiveIndex(enabledIndexes.at(-1) ?? 0);
+    else if (event.key === "Enter" || event.key === " ") choose(activeIndex);
+    else if (event.key === "Escape") {
+      setOpen(false);
+      requestAnimationFrame(() => triggerRef.current?.focus());
+    }
+  }
+
   return (
-    <span className={classes("ui-select-shell", className)}>
-      <select {...props} className="ui-select">
-        {children}
-      </select>
-      <Icon aria-hidden="true" name="chevron-down" size={14} />
-    </span>
+    <div className={classes("ui-select", className)} ref={rootRef}>
+      <button
+        aria-controls={listboxId}
+        aria-describedby={ariaDescribedBy}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label={ariaLabel}
+        className="ui-select__trigger"
+        disabled={disabled}
+        id={id}
+        onClick={() =>
+          open
+            ? setOpen(false)
+            : openAt(
+                selectedIndex >= 0 ? selectedIndex : (enabledIndexes[0] ?? 0),
+              )
+        }
+        onKeyDown={handleTriggerKeyDown}
+        ref={triggerRef}
+        role="combobox"
+        type="button"
+      >
+        <span className="ui-select__value">{selected?.label ?? "—"}</span>
+        <Icon aria-hidden="true" name="chevron-down" size={14} />
+      </button>
+      {open && (
+        <div
+          aria-activedescendant={`${listboxId}-option-${activeIndex}`}
+          aria-label={ariaLabel}
+          className="ui-popover ui-select__listbox"
+          id={listboxId}
+          onKeyDown={handleListboxKeyDown}
+          ref={listboxRef}
+          role="listbox"
+          tabIndex={-1}
+        >
+          {options.map((option, index) => (
+            <div
+              aria-disabled={option.disabled || undefined}
+              aria-selected={option.value === value}
+              className={classes(
+                "ui-select__option",
+                index === activeIndex && "is-active",
+              )}
+              id={`${listboxId}-option-${index}`}
+              key={`${String(option.value)}-${index}`}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                choose(index);
+              }}
+              onMouseEnter={() => !option.disabled && setActiveIndex(index)}
+              role="option"
+            >
+              <span>{option.label}</span>
+              {option.value === value && (
+                <span aria-hidden="true" className="ui-select__check">
+                  ✓
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -199,16 +453,22 @@ export function Checkbox({
   );
 }
 
-export function SelectField({
-  children,
+export function SelectField<T extends SelectValue>({
   className,
   hint,
   id: providedId,
   label,
-  ...props
-}: SelectHTMLAttributes<HTMLSelectElement> & {
+  onValueChange,
+  options,
+  value,
+}: {
+  className?: string;
   hint?: string;
+  id?: string;
   label: string;
+  onValueChange: (value: T) => void;
+  options: ReadonlyArray<SelectOption<T>>;
+  value: T;
 }) {
   const generatedId = useId();
   const id = providedId ?? generatedId;
@@ -218,9 +478,14 @@ export function SelectField({
       <label className="ui-field__label" htmlFor={id}>
         {label}
       </label>
-      <SelectControl {...props} aria-describedby={descriptionId} id={id}>
-        {children}
-      </SelectControl>
+      <SelectControl
+        aria-describedby={descriptionId}
+        aria-label={label}
+        id={id}
+        onValueChange={onValueChange}
+        options={options}
+        value={value}
+      />
       {hint && (
         <span className="ui-field__description" id={descriptionId}>
           {hint}

@@ -442,36 +442,6 @@ dd {
   margin: 5px 0 0;
   font-size: 18px;
 }
-button {
-  align-items: center;
-  appearance: none;
-  background: var(--color-accent-primary);
-  border: var(--border-width) solid transparent;
-  border-radius: var(--control-radius);
-  color: var(--color-text-primary);
-  display: inline-flex;
-  font: inherit;
-  font-family: var(--font-family-sans);
-  font-size: var(--font-size-control);
-  font-weight: var(--font-weight-semibold);
-  justify-content: center;
-  min-height: var(--control-height-md);
-  padding: 0 var(--control-padding-x);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-fast) var(--motion-easing),
-    border-color var(--motion-fast) var(--motion-easing),
-    box-shadow var(--motion-fast) var(--motion-easing),
-    color var(--motion-fast) var(--motion-easing);
-}
-button:hover:not(:disabled) {
-  background: var(--color-accent-hover);
-}
-button:focus-visible {
-  border-color: var(--control-border-focus);
-  box-shadow: var(--control-focus-ring);
-  outline: none;
-}
 .next {
   display: flex;
   gap: 18px;
@@ -573,7 +543,7 @@ footer {
   margin-top: 8px;
 }
 .scanner .ui-input,
-.scanner .ui-select-shell {
+.scanner .ui-select {
   width: 100%;
 }
 .path-row {
@@ -583,21 +553,10 @@ footer {
 .path-row button {
   flex-shrink: 0;
 }
-button:disabled,
 input:disabled,
-select:disabled {
+textarea:disabled {
   cursor: not-allowed;
   opacity: 0.62;
-}
-button.secondary {
-  background: var(--control-background-hover);
-  border-color: var(--control-border);
-  color: var(--control-text);
-  font-size: var(--font-size-sm);
-}
-button.secondary:hover:not(:disabled) {
-  background: var(--color-accent-subtle);
-  border-color: var(--control-border-hover);
 }
 .hint {
   font-size: 12px;
@@ -674,9 +633,9 @@ progress {
 .directory-column {
   border-right: var(--border-width) solid var(--color-border-default);
   display: grid;
-  flex: 0 0 17rem;
+  flex: 0 0 var(--column-width);
   grid-template-rows: auto minmax(0, 1fr) auto;
-  min-width: 17rem;
+  min-width: var(--column-width);
 }
 .directory-column:last-child {
   border-right: 0;
@@ -935,35 +894,11 @@ button.duplicate-group-toggle {
   right: 0;
   top: 0;
 }
-.navigation-actions,
-.breadcrumbs ol {
+.navigation-actions {
   align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-.breadcrumbs {
-  margin: -6px 0 16px;
-}
-.breadcrumbs ol {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.breadcrumbs li:not(:last-child)::after {
-  color: var(--color-text-muted);
-  content: "/";
-  margin-left: 8px;
-}
-button.breadcrumb {
-  background: transparent;
-  border: 0;
-  color: var(--color-status-info);
-  padding: 3px;
-}
-button.breadcrumb:disabled {
-  color: var(--color-text-primary);
-  opacity: 1;
 }
 .disk-overview-metrics {
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -992,7 +927,7 @@ button.breadcrumb:disabled {
   gap: 4px;
   margin-right: 6px;
 }
-.view-switcher .ui-select-shell {
+.view-switcher .ui-select {
   max-width: 100%;
   min-width: 176px;
 }
@@ -1165,7 +1100,7 @@ button.treemap-tile:hover {
   font-size: 0.9rem;
 }
 
-.folder-sort .ui-select-shell {
+.folder-sort .ui-select {
   min-width: 15rem;
 }
 
@@ -1211,7 +1146,7 @@ button.treemap-tile:hover {
   gap: var(--space-1);
 }
 .result-filters .ui-input,
-.result-filters .ui-select-shell {
+.result-filters .ui-select {
   min-width: 12rem;
 }
 .selection-action-bar {
@@ -1229,6 +1164,7 @@ button.treemap-tile:hover {
   gap: var(--space-4);
   justify-content: space-between;
   margin-top: var(--space-4);
+  min-height: 4rem;
   padding: var(--space-3) var(--space-4);
   position: sticky;
   z-index: 10;

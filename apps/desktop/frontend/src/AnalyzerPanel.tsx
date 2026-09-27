@@ -11,7 +11,6 @@ import {
   type DirectoryMapMetric,
   type DirectoryMapNode,
   type FileCategory,
-  type FileSort,
   type IndexedEntry,
   type Platform,
   type ScanSession,
@@ -20,13 +19,15 @@ import { formatBytes } from "./ScanPanel";
 import {
   type AnalyzerResultMode,
   type DirectoryVisualizationMode,
-  type FolderSort,
 } from "./state/analyzerState";
 import { useAnalyzerController } from "./state/useAnalyzerController";
 import { ColumnBrowser } from "./components/ColumnBrowser";
 import { SelectionActionBar } from "./components/SelectionActionBar";
 import { revealActionLabel } from "./platformLabels";
 import {
+  Button,
+  Breadcrumb,
+  BreadcrumbItem,
   Checkbox,
   InlineAlert,
   SearchField,
@@ -111,27 +112,36 @@ function EntryRowContent({
         {formatBytes(entry.aggregate_size)}
       </span>
       {entry.kind === "directory" && onDirectory && (
-        <button className="secondary" onClick={() => onDirectory(entry)}>
+        <Button
+          onClick={() => onDirectory(entry)}
+          size="small"
+          variant="secondary"
+        >
           Открыть
-        </button>
+        </Button>
       )}
       {onAction && (
         <div className="entry-actions">
-          <button className="secondary" onClick={() => onAction(entry, "open")}>
+          <Button
+            onClick={() => onAction(entry, "open")}
+            size="small"
+            variant="secondary"
+          >
             Открыть в системе
-          </button>
-          <button
-            className="secondary"
+          </Button>
+          <Button
             onClick={() => onAction(entry, "reveal")}
+            size="small"
+            variant="secondary"
           >
             {revealActionLabel(platform)}
-          </button>
+          </Button>
         </div>
       )}
       {onTrash && entry.kind !== "symlink" && entry.kind !== "other" && (
-        <button className="secondary danger" onClick={() => onTrash(entry)}>
+        <Button onClick={() => onTrash(entry)} size="small" variant="danger">
           В корзину
-        </button>
+        </Button>
       )}
     </>
   );
@@ -387,22 +397,22 @@ function DirectoryVisualization({
             Размер
             <SelectControl
               aria-label="Метрика карты каталогов"
+              options={[
+                { value: "logical", label: "Логический" },
+                {
+                  value: "allocated",
+                  label: "На диске",
+                  disabled: scan.allocated_size === null,
+                },
+                {
+                  value: "unique_allocated",
+                  label: "Уникально на диске",
+                  disabled: scan.unique_allocated_size === null,
+                },
+              ]}
               value={metric}
-              onChange={(event) =>
-                onMetric(event.target.value as DirectoryMapMetric)
-              }
-            >
-              <option value="logical">Логический</option>
-              <option value="allocated" disabled={scan.allocated_size === null}>
-                На диске
-              </option>
-              <option
-                value="unique_allocated"
-                disabled={scan.unique_allocated_size === null}
-              >
-                Уникально на диске
-              </option>
-            </SelectControl>
+              onValueChange={onMetric}
+            />
           </label>
           <SegmentedControl<DirectoryVisualizationMode>
             label="Визуализация структуры"
@@ -840,13 +850,18 @@ export function AnalyzerPanel({
                 onChange={(event) =>
                   controller.setSearchText(event.target.value)
                 }
+                onClear={() => controller.setSearchText("")}
                 placeholder="Поиск по имени"
                 ref={searchInputRef}
                 value={searchText}
               />
-              <button type="submit" disabled={!searchText.trim()}>
+              <Button
+                disabled={!searchText.trim()}
+                type="submit"
+                variant="secondary"
+              >
                 Найти
-              </button>
+              </Button>
             </form>
           </div>
 
@@ -865,60 +880,55 @@ export function AnalyzerPanel({
                     className="navigation-actions"
                     aria-label="История папок"
                   >
-                    <button
-                      className="secondary"
+                    <Button
                       disabled={navigationIndex <= 0}
                       onClick={() =>
                         void controller.navigateTo(navigationIndex - 1)
                       }
+                      size="small"
+                      variant="secondary"
                     >
                       Назад
-                    </button>
-                    <button
-                      className="secondary"
+                    </Button>
+                    <Button
                       disabled={navigationIndex >= navigation.length - 1}
                       onClick={() =>
                         void controller.navigateTo(navigationIndex + 1)
                       }
+                      size="small"
+                      variant="secondary"
                     >
                       Вперёд
-                    </button>
+                    </Button>
                   </div>
                 </div>
-                <nav className="breadcrumbs" aria-label="Путь к каталогу">
-                  <ol>
-                    {navigation
-                      .slice(0, navigationIndex + 1)
-                      .map((entry, index) => (
-                        <li key={`${entry.id}-${index}`}>
-                          <button
-                            className="breadcrumb"
-                            disabled={index === navigationIndex}
-                            aria-current={
-                              index === navigationIndex ? "page" : undefined
-                            }
-                            onClick={() => void controller.navigateTo(index)}
-                          >
-                            {index === 0
-                              ? entry.name || entry.path
-                              : entry.name}
-                          </button>
-                        </li>
-                      ))}
-                  </ol>
-                </nav>
+                <Breadcrumb label="Путь к каталогу">
+                  {navigation
+                    .slice(0, navigationIndex + 1)
+                    .map((entry, index) => (
+                      <BreadcrumbItem
+                        current={index === navigationIndex}
+                        key={`${entry.id}-${index}`}
+                        onClick={() => void controller.navigateTo(index)}
+                      >
+                        {index === 0 ? entry.name || entry.path : entry.name}
+                      </BreadcrumbItem>
+                    ))}
+                </Breadcrumb>
                 <label className="folder-sort">
                   Сортировка
                   <SelectControl
                     aria-label="Сортировка содержимого каталога"
+                    options={[
+                      {
+                        value: "size_desc",
+                        label: "Размер: больше сначала",
+                      },
+                      { value: "name_asc", label: "Имя: А–Я" },
+                    ]}
                     value={folderSort}
-                    onChange={(event) =>
-                      controller.setFolderSort(event.target.value as FolderSort)
-                    }
-                  >
-                    <option value="size_desc">Размер: больше сначала</option>
-                    <option value="name_asc">Имя: А–Я</option>
-                  </SelectControl>
+                    onValueChange={controller.setFolderSort}
+                  />
                 </label>
                 <ColumnBrowser
                   columns={columns}
@@ -972,13 +982,13 @@ export function AnalyzerPanel({
                     Выборка строится по сохранённому локальному индексу.
                   </p>
                 </div>
-                <button
-                  className="secondary"
+                <Button
                   disabled={loading}
                   onClick={() => void controller.showLargeFiles()}
+                  variant="secondary"
                 >
                   Обновить выборку
-                </button>
+                </Button>
               </div>
               <div className="result-filters">
                 <label>
@@ -999,34 +1009,31 @@ export function AnalyzerPanel({
                   Категория
                   <SelectControl
                     aria-label="Категория крупных файлов"
-                    onChange={(event) =>
-                      controller.setLargeCategory(
-                        event.target.value as FileCategory | "",
-                      )
-                    }
+                    onValueChange={controller.setLargeCategory}
+                    options={[
+                      { value: "" as const, label: "Все" },
+                      ...(
+                        Object.entries(categoryLabels) as [
+                          FileCategory,
+                          string,
+                        ][]
+                      ).map(([value, label]) => ({ value, label })),
+                    ]}
                     value={largeCategory}
-                  >
-                    <option value="">Все</option>
-                    {Object.entries(categoryLabels).map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </SelectControl>
+                  />
                 </label>
                 <label>
                   Сортировка
                   <SelectControl
                     aria-label="Сортировка крупных файлов"
-                    onChange={(event) =>
-                      controller.setLargeSort(event.target.value as FileSort)
-                    }
+                    onValueChange={controller.setLargeSort}
+                    options={[
+                      { value: "size_desc", label: "Размер" },
+                      { value: "modified_desc", label: "Изменён" },
+                      { value: "name_asc", label: "Имя" },
+                    ]}
                     value={largeSort}
-                  >
-                    <option value="size_desc">Размер</option>
-                    <option value="modified_desc">Изменён</option>
-                    <option value="name_asc">Имя</option>
-                  </SelectControl>
+                  />
                 </label>
               </div>
               {!largeFiles ? (
@@ -1048,15 +1055,15 @@ export function AnalyzerPanel({
                 <p className="hint">Крупные файлы не найдены.</p>
               )}
               {largeFiles?.next_cursor && (
-                <button
-                  className="secondary"
+                <Button
                   disabled={loading}
                   onClick={() =>
                     void controller.showLargeFiles(largeFiles.next_cursor)
                   }
+                  variant="secondary"
                 >
                   Следующая страница
-                </button>
+                </Button>
               )}
             </section>
           )}
@@ -1081,14 +1088,15 @@ export function AnalyzerPanel({
                     <ul className="category-list">
                       {categories.map((item) => (
                         <li key={item.category}>
-                          <button
-                            className="secondary"
+                          <Button
                             onClick={() =>
                               void controller.showCategory(item.category)
                             }
+                            size="small"
+                            variant="secondary"
                           >
                             {categoryLabels[item.category]}
-                          </button>
+                          </Button>
                           <strong>
                             {formatBytes(item.logical_size)} ·{" "}
                             {item.files_count} шт.
@@ -1119,17 +1127,17 @@ export function AnalyzerPanel({
                     selected={new Set(selected.map((entry) => entry.id))}
                   />
                   {categoryFiles.next_cursor && (
-                    <button
-                      className="secondary"
+                    <Button
                       onClick={() =>
                         void controller.showCategory(
                           activeCategory,
                           categoryFiles.next_cursor,
                         )
                       }
+                      variant="secondary"
                     >
                       Следующая страница
-                    </button>
+                    </Button>
                   )}
                 </section>
               )}
@@ -1148,12 +1156,12 @@ export function AnalyzerPanel({
                   </p>
                 </div>
                 {searchQuery && (
-                  <button
-                    className="secondary"
+                  <Button
                     onClick={() => controller.clearSearch()}
+                    variant="secondary"
                   >
                     Очистить
-                  </button>
+                  </Button>
                 )}
               </div>
               {!search ? null : search.items.length ? (
@@ -1171,15 +1179,15 @@ export function AnalyzerPanel({
                 <p className="hint">Совпадения не найдены.</p>
               )}
               {search?.next_cursor && (
-                <button
-                  className="secondary"
+                <Button
                   disabled={loading}
                   onClick={() =>
                     void controller.runSearch(searchQuery, search.next_cursor)
                   }
+                  variant="secondary"
                 >
                   Следующая страница поиска
-                </button>
+                </Button>
               )}
             </section>
           )}

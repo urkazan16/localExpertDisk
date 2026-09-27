@@ -34,6 +34,7 @@ const iconNames: IconName[] = [
 
 export function UiPreview() {
   const [mode, setMode] = useState<"structure" | "large">("structure");
+  const [metric, setMetric] = useState<"logical" | "allocated">("logical");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [popoverOpen, setPopoverOpen] = useState(false);
   return (
@@ -89,10 +90,15 @@ export function UiPreview() {
               value="/private"
               readOnly
             />
-            <SelectField label="Метрика" defaultValue="logical">
-              <option value="logical">Логический размер</option>
-              <option value="allocated">На диске</option>
-            </SelectField>
+            <SelectField
+              label="Метрика"
+              onValueChange={setMetric}
+              options={[
+                { value: "logical", label: "Логический размер" },
+                { value: "allocated", label: "На диске" },
+              ]}
+              value={metric}
+            />
           </div>
         </div>
         <div>

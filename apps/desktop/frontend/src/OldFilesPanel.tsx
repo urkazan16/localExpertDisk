@@ -13,7 +13,7 @@ import {
 import { errorMessage } from "./api/errors";
 import { formatBytes } from "./ScanPanel";
 import { SelectionActionBar } from "./components/SelectionActionBar";
-import { Checkbox, InlineAlert, SelectControl } from "./ui/primitives";
+import { Button, Checkbox, InlineAlert, SelectControl } from "./ui/primitives";
 
 const periods = [
   [30, "Более 30 дней"],
@@ -205,23 +205,19 @@ export function OldFilesPanel({
           <label className="old-files-filter" htmlFor="old-files-criterion">
             Критерий времени
             <SelectControl
+              aria-label="Критерий времени"
               id="old-files-criterion"
-              value={criterion}
-              onChange={(event) => {
-                setCriterion(event.target.value as OldFileCriterion);
+              onValueChange={(value) => {
+                setCriterion(value);
                 setResult(null);
                 setQueryCutoff(null);
                 setQueryMinSize(null);
               }}
-            >
-              {(
+              options={(
                 Object.entries(criterionLabels) as [OldFileCriterion, string][]
-              ).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </SelectControl>
+              ).map(([value, label]) => ({ value, label }))}
+              value={criterion}
+            />
           </label>
           {criterion === "accessed" && (
             <p className="hint">
@@ -233,23 +229,20 @@ export function OldFilesPanel({
           <label className="old-files-filter" htmlFor="old-files-period">
             Период
             <SelectControl
+              aria-label="Период"
               id="old-files-period"
-              value={period}
-              onChange={(event) => {
-                const value = event.target.value;
-                setPeriod(value === "custom" ? value : Number(value));
+              onValueChange={(value) => {
+                setPeriod(value);
                 setResult(null);
                 setQueryCutoff(null);
                 setQueryMinSize(null);
               }}
-            >
-              {periods.map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-              <option value="custom">Указать дату</option>
-            </SelectControl>
+              options={[
+                ...periods.map(([value, label]) => ({ value, label })),
+                { value: "custom" as const, label: "Указать дату" },
+              ]}
+              value={period}
+            />
           </label>
           {period === "custom" && (
             <label className="old-files-filter" htmlFor="old-files-date">
@@ -285,12 +278,12 @@ export function OldFilesPanel({
               }}
             />
           </label>
-          <button
+          <Button
             onClick={() => void load()}
             disabled={loading || selectedCutoff() === null}
           >
             Показать файлы
-          </button>
+          </Button>
           {loading && <p role="status">Ищем в локальном индексе…</p>}
           {error && <p role="alert">{error}</p>}
           {trashNotice && (
@@ -333,13 +326,13 @@ export function OldFilesPanel({
               </p>
             ))}
           {result?.next_cursor && (
-            <button
-              className="secondary"
+            <Button
               disabled={loading}
               onClick={() => void load(result.next_cursor)}
+              variant="secondary"
             >
               Следующая страница
-            </button>
+            </Button>
           )}
           <SelectionActionBar
             busy={loading}

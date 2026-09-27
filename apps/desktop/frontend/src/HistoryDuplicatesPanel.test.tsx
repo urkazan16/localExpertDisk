@@ -37,6 +37,11 @@ vi.mock("./api/generated", () => ({
   setRetentionPolicy: vi.fn(),
 }));
 
+function chooseSelectOption(label: string, option: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: label }));
+  fireEvent.mouseDown(screen.getByRole("option", { name: option }));
+}
+
 const scan = (id: string, root = "/archive"): ScanSession => ({
   id,
   root_path: root,
@@ -242,10 +247,7 @@ describe("History and duplicates UI", () => {
 
   it("persists the selected retention policy", async () => {
     render(<HistoryDuplicatesPanel enabled />);
-    fireEvent.change(
-      screen.getByLabelText("Количество сохраняемых сканирований"),
-      { target: { value: "25" } },
-    );
+    chooseSelectOption("Количество сохраняемых сканирований", "25");
     await waitFor(() => expect(setRetentionPolicy).toHaveBeenCalledWith(25));
     expect(
       await screen.findByText("Автоочистка сохранена: хранить последних 25."),
@@ -259,10 +261,7 @@ describe("History and duplicates UI", () => {
     render(<HistoryDuplicatesPanel enabled activeScanId="7" />);
     const cleanup = screen.getByRole("button", { name: "Очистить старые" });
     await waitFor(() => expect(cleanup).toBeEnabled());
-    fireEvent.change(
-      screen.getByLabelText("Количество сохраняемых сканирований"),
-      { target: { value: "5" } },
-    );
+    chooseSelectOption("Количество сохраняемых сканирований", "5");
     fireEvent.click(cleanup);
     await waitFor(() =>
       expect(cleanupScanHistory).toHaveBeenCalledWith(5, "7"),
