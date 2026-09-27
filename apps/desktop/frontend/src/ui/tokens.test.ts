@@ -165,12 +165,21 @@ describe("semantic design tokens", () => {
       expect(content, `${path} contains a legacy secondary button`).not.toMatch(
         /<button\b[^>]*className="[^"]*secondary/,
       );
-      for (const input of content.matchAll(/<input\b[\s\S]*?\/>/g)) {
-        expect(input[0], `${path} contains an unstyled input`).toContain(
-          'className="ui-input"',
-        );
-      }
+      expect(content, `${path} contains a raw input`).not.toMatch(/<input\b/);
     }
+  });
+
+  it("renders volumes as rich rows with stable numeric metadata", () => {
+    const sidebar = source("shell/Sidebar.tsx");
+    expect(sidebar).toMatch(/className="sidebar-item sidebar-volume"/);
+    expect(sidebar).toMatch(/formatBytes\(volume\.available_bytes\)/);
+    expect(sidebar).toMatch(/formatBytes\(volume\.total_bytes\)/);
+    expect(sidebar).toMatch(/volumeNameCounts/);
+    expect(sidebar).toMatch(/className="sidebar-volume__mount"/);
+    expect(appCss).toMatch(/\.sidebar-volume\s*{[^}]*min-height:\s*4rem/s);
+    expect(appCss).toMatch(
+      /\.sidebar-volume__stats\s*{[^}]*font-variant-numeric:\s*tabular-nums/s,
+    );
   });
 
   it("preserves desktop navigation and overflow behavior at the minimum window", () => {

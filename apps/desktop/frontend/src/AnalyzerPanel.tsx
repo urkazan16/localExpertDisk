@@ -33,6 +33,7 @@ import {
   SearchField,
   SegmentedControl,
   SelectControl,
+  TextField,
 } from "./ui/primitives";
 
 const kindLabels = {
@@ -991,20 +992,16 @@ export function AnalyzerPanel({
                 </Button>
               </div>
               <div className="result-filters">
-                <label>
-                  Минимум, байт
-                  <input
-                    className="ui-input"
-                    aria-label="Минимальный размер крупного файла"
-                    inputMode="numeric"
-                    onChange={(event) =>
-                      controller.setLargeMinSize(
-                        event.target.value.replace(/\D/g, ""),
-                      )
-                    }
-                    value={largeMinSize}
-                  />
-                </label>
+                <TextField
+                  inputMode="numeric"
+                  label="Минимум, байт"
+                  onChange={(event) =>
+                    controller.setLargeMinSize(
+                      event.target.value.replace(/\D/g, ""),
+                    )
+                  }
+                  value={largeMinSize}
+                />
                 <label>
                   Категория
                   <SelectControl

@@ -248,11 +248,15 @@ describe("Scanner UI", () => {
     expect(screen.getByLabelText("Абсолютный путь к каталогу")).toBeEnabled();
     expect(screen.queryByText("private diagnostic")).not.toBeInTheDocument();
   });
-  it("formats counts above Number.MAX_SAFE_INTEGER without rounding", () => {
+  it("formats large integers and binary units without precision loss", () => {
     expect(formatCount("9007199254740993").replace(/\s/g, "")).toBe(
       "9007199254740993",
     );
-    expect(formatBytes("1024")).toBe("1 КиБ");
-    expect(formatBytes("0")).toBe("0 Б");
+    expect(formatBytes("1024")).toBe("1\u00a0КиБ");
+    expect(formatBytes("0")).toBe("0\u00a0Б");
+    expect(formatBytes("11744051")).toBe("11,2\u00a0МиБ");
+    expect(formatBytes("400451174")).toBe("381,9\u00a0МиБ");
+    expect(formatBytes("1610612736")).toBe("1,5\u00a0ГиБ");
+    expect(formatBytes("1073699880")).toBe("1\u00a0ГиБ");
   });
 });

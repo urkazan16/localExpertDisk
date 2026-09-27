@@ -139,7 +139,9 @@ describe("application shell", () => {
       await screen.findByText("Выберите том или папку"),
     ).toBeInTheDocument();
     expect(
-      await screen.findByRole("button", { name: "Macintosh HD" }),
+      await screen.findByRole("button", {
+        name: /Macintosh HD, \/, 381,5\sМиБ свободно из 953,7\sМиБ/,
+      }),
     ).toBeInTheDocument();
     expect(
       await screen.findByRole("button", { name: "Документы" }),
@@ -151,7 +153,7 @@ describe("application shell", () => {
     vi.mocked(startScan).mockResolvedValue(activeScan);
     render(<App />);
     fireEvent.click(
-      await screen.findByRole("button", { name: "Macintosh HD" }),
+      await screen.findByRole("button", { name: /^Macintosh HD,/ }),
     );
     expect(
       screen.getByRole("heading", { name: "Macintosh HD" }),
@@ -180,7 +182,7 @@ describe("application shell", () => {
     );
     render(<App />);
     fireEvent.click(
-      await screen.findByRole("button", { name: "Macintosh HD" }),
+      await screen.findByRole("button", { name: /^Macintosh HD,/ }),
     );
     const startButton = screen.getByRole("button", {
       name: "Начать сканирование",

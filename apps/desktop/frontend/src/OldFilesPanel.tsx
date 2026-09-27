@@ -13,7 +13,13 @@ import {
 import { errorMessage } from "./api/errors";
 import { formatBytes } from "./ScanPanel";
 import { SelectionActionBar } from "./components/SelectionActionBar";
-import { Button, Checkbox, InlineAlert, SelectControl } from "./ui/primitives";
+import {
+  Button,
+  Checkbox,
+  InlineAlert,
+  SelectControl,
+  TextField,
+} from "./ui/primitives";
 
 const periods = [
   [30, "Более 30 дней"],
@@ -245,39 +251,35 @@ export function OldFilesPanel({
             />
           </label>
           {period === "custom" && (
-            <label className="old-files-filter" htmlFor="old-files-date">
-              Дата
-              <input
-                className="ui-input"
-                id="old-files-date"
-                type="date"
-                value={customDate}
-                onChange={(event) => {
-                  setCustomDate(event.target.value);
-                  setResult(null);
-                  setQueryCutoff(null);
-                  setQueryMinSize(null);
-                }}
-              />
-            </label>
-          )}
-          <label className="old-files-filter" htmlFor="old-files-min-size">
-            Минимальный размер, МиБ
-            <input
-              className="ui-input"
-              id="old-files-min-size"
-              type="number"
-              min="0"
-              step="1"
-              value={minSizeMiB}
+            <TextField
+              className="old-files-filter"
+              id="old-files-date"
+              label="Дата"
+              type="date"
+              value={customDate}
               onChange={(event) => {
-                setMinSizeMiB(event.target.value);
+                setCustomDate(event.target.value);
                 setResult(null);
                 setQueryCutoff(null);
                 setQueryMinSize(null);
               }}
             />
-          </label>
+          )}
+          <TextField
+            className="old-files-filter"
+            id="old-files-min-size"
+            label="Минимальный размер, МиБ"
+            type="number"
+            min="0"
+            step="1"
+            value={minSizeMiB}
+            onChange={(event) => {
+              setMinSizeMiB(event.target.value);
+              setResult(null);
+              setQueryCutoff(null);
+              setQueryMinSize(null);
+            }}
+          />
           <Button
             onClick={() => void load()}
             disabled={loading || selectedCutoff() === null}

@@ -68,9 +68,16 @@ export function formatBytes(value: string): string {
     scale *= 1024n;
     unit++;
   }
-  const whole = bytes / scale;
-  const tenth = ((bytes % scale) * 10n) / scale;
-  return `${whole.toLocaleString("ru-RU")}${unit && tenth ? "," + tenth.toString() : ""} ${units[unit]}`;
+  let roundedTenths = (bytes * 10n + scale / 2n) / scale;
+  if (unit < units.length - 1 && roundedTenths >= 10240n) {
+    scale *= 1024n;
+    unit++;
+    roundedTenths = (bytes * 10n + scale / 2n) / scale;
+  }
+  const whole = roundedTenths / 10n;
+  const tenth = roundedTenths % 10n;
+  const number = `${whole.toLocaleString("ru-RU")}${tenth ? "," + tenth.toString() : ""}`;
+  return `${number}\u00a0${units[unit]}`;
 }
 
 export function scanIssueLabel(code: string): string {

@@ -280,6 +280,14 @@ async function runScan(expectedState, measureStartFeedback = false) {
   await input.setValue(root);
   await (await waitForButton("Использовать путь")).click();
   await saveEvidence("01-selected-target.png");
+  const volumeRows = await $$(".sidebar-volume");
+  if (volumeRows.length) {
+    expect(await volumeRows[0].getSize("height")).toBeGreaterThanOrEqual(64);
+    await expect(volumeRows[0].$(".sidebar-volume__stats")).toHaveText(
+      expect.stringMatching(/[КМГТПЭ]иБ/),
+    );
+    await saveEvidence("08-volumes-sidebar.png", ".app-sidebar");
+  }
   const startButton = await waitForButton("Начать сканирование");
   if (measureStartFeedback) {
     const scanStartFeedbackMs = await measureWebdriverClickReaction(

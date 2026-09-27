@@ -9,7 +9,7 @@ import {
   scanLabels,
 } from "./state/scanState";
 import { useScanController } from "./state/useScanController";
-import { Button, SelectControl } from "./ui/primitives";
+import { Button, SelectControl, TextField } from "./ui/primitives";
 
 export { formatBytes, formatCount, isTerminal } from "./state/scanState";
 
@@ -94,11 +94,11 @@ export function ScanPanel({
             })),
           ]}
         />
-        <label htmlFor="scan-root">Абсолютный путь к каталогу</label>
         <div className="path-row">
-          <input
-            className="ui-input"
+          <TextField
+            className="scan-root-field"
             id="scan-root"
+            label="Абсолютный путь к каталогу"
             value={root}
             onChange={(event) => setRoot(event.target.value)}
             disabled={!enabled || busy}

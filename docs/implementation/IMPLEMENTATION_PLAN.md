@@ -3686,13 +3686,14 @@ Column Browser, Sunburst и Treemap не перепроектировались.
 | Checkbox | Все экранные checkbox проходят через `Checkbox`; размер 18 px, собственные checked/hover/focus/disabled states. |
 | Buttons | Обычные действия используют общие primary/secondary/ghost/danger/disclosure variants и semantic states. `Breadcrumb`/`BreadcrumbItem` вынесены в UI layer. Специализированные sidebar, treemap и sunburst buttons сохраняют нативную button-семантику и собственную геометрию, но используют те же tokens и видимый focus. |
 | Segmented controls | Режимы результатов и Treemap/Sunburst используют один `SegmentedControl` с `aria-pressed`; полная высота — 36 px. |
-| Typography и numbers | Системный sans-serif сохранён; control text — 14 px. Размеры файлов используют tabular numerals и правое выравнивание в строках. |
+| Typography и numbers | Системный sans-serif сохранён; control text — 14 px. Двоичные размеры округляются до одной десятичной цифры, используют `КиБ/МиБ/ГиБ` с неразрывным пробелом, tabular numerals и правое выравнивание в строках. |
+| Sidebar volumes | Тома используют rich row высотой 64 px: имя, доступный и общий объём, индикатор заполнения. Одноимённые системные тома различаются компактным mount point (`/`, `Data`); полный путь остаётся в accessible name и tooltip. |
 | File rows и scrollbars | Column Browser использует колонки 256 px, строки 50 px и file/folder icons 20 px; hover, selected, active и keyboard focus различимы. Scrollbars получают неброскую tokenized стилизацию там, где её поддерживает WebView. |
 | Bottom Action Bar | `SelectionActionBar` имеет минимальную высоту 64 px, использует общие button variants, tokenized surface/border и стабильные disabled states. |
 
 Автоматические ограничения находятся в `ui/tokens.test.ts` и
 `ui/primitives.test.tsx`: они запрещают raw colors вне token source, проверяют
-контраст и состояния, не допускают raw select/checkbox и нестилизованные input
+контраст и состояния, не допускают raw select/checkbox/input
 в рабочих экранах, а также проверяют доступные имена и семантику primitives.
 
 Screenshot evidence:
@@ -3705,6 +3706,7 @@ docs/evidence/ui-form-controls-polish/04-selection-review.png
 docs/evidence/ui-form-controls-polish/05-large-files-controls.png
 docs/evidence/ui-form-controls-polish/06-search-controls.png
 docs/evidence/ui-form-controls-polish/07-custom-select-popup.png
+docs/evidence/ui-form-controls-polish/08-volumes-sidebar.png
 ```
 
 Осознанно сохранённые различия с reference: продуктовые названия и состав
