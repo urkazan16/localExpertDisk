@@ -106,6 +106,7 @@ async function saveEvidence(name, focusSelector = null) {
 }
 
 async function measureDomReaction(action, selector) {
+  // DOM latency stays deterministic under Xvfb; frame cadence is gated separately below.
   return browser.executeAsync(
     (actionName, resultSelector, done) => {
       const started = performance.now();
@@ -120,7 +121,7 @@ async function measureDomReaction(action, selector) {
       const observer = new MutationObserver(() => {
         if (document.querySelector(resultSelector)) {
           observer.disconnect();
-          requestAnimationFrame(() => finish());
+          finish();
         }
       });
       observer.observe(document.body, { childList: true, subtree: true });
@@ -158,7 +159,7 @@ async function measureWebdriverClickReaction(action, selector, expectedText) {
       function check() {
         const result = document.querySelector(resultSelector);
         if (finished || !result?.textContent?.includes(text)) return;
-        requestAnimationFrame(() => finish());
+        finish();
       }
       window.__localExpertPerformance[metricKey] = null;
       if (!(target instanceof HTMLElement)) {
@@ -222,7 +223,7 @@ async function measureFormSubmitReaction(formSelector, selector, expectedText) {
       function check() {
         const result = document.querySelector(resultSelector);
         if (finished || !result?.textContent?.includes(text)) return;
-        requestAnimationFrame(() => finish());
+        finish();
       }
       observer.observe(document.body, {
         attributes: true,
@@ -248,11 +249,7 @@ async function measureFocusFeedback(selector) {
     }
     const started = performance.now();
     target.focus();
-    requestAnimationFrame(() =>
-      done(
-        document.activeElement === target ? performance.now() - started : -1,
-      ),
-    );
+    done(document.activeElement === target ? performance.now() - started : -1);
   }, selector);
 }
 

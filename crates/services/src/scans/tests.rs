@@ -965,9 +965,11 @@ fn comparison_change_lists_are_keyset_paginated_for_every_kind() {
     };
     let older = run();
     for index in 0..205 {
-        fs::remove_file(f.root.join(format!("removed-{index:03}"))).unwrap();
         fs::write(f.root.join(format!("modified-{index:03}")), [2, 3]).unwrap();
         fs::write(f.root.join(format!("added-{index:03}")), [4]).unwrap();
+    }
+    for index in 0..205 {
+        fs::remove_file(f.root.join(format!("removed-{index:03}"))).unwrap();
     }
     let newer = run();
 
@@ -1289,7 +1291,7 @@ fn duplicate_hashing_invalidates_cache_and_reports_changed_file_path() {
     let result = service.confirm_duplicates_with_progress(|_| true).unwrap();
     assert!(result.groups.items.is_empty());
     assert_eq!(result.failures.len(), 1);
-    assert!(result.failures[0].path.ends_with("/input/copy-b"));
+    assert!(Path::new(&result.failures[0].path).ends_with(Path::new("input").join("copy-b")));
     assert_eq!(result.failures[0].code, ErrorCode::EntryChanged);
     let connection = Connection::open(&f.db).unwrap();
     let cleared: i64 = connection

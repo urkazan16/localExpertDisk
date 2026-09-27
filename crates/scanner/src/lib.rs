@@ -94,8 +94,7 @@ pub fn scan(
         };
         let metadata = fs.metadata(&task.path);
         let valid = metadata.as_ref().is_ok_and(|current| {
-            current.kind == EntryKind::Directory
-                && (task.identity.is_none() || current.identity == task.identity)
+            current.kind == EntryKind::Directory && current.identity == task.identity
         });
         let listing = if valid {
             fs.read_directory(&task.path)
