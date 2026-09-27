@@ -15,14 +15,21 @@ function write(relativePath, contents) {
 }
 
 function run(command, args, environment = process.env) {
-  const executable = process.platform === "win32" ? `${command}.cmd` : command;
-  const result = spawnSync(executable, args, {
+  const result = spawnSync(command, args, {
     cwd: process.cwd(),
     env: environment,
     stdio: "inherit",
   });
   if (result.error) throw result.error;
   return result.status ?? 1;
+}
+
+function runNpm(args, environment = process.env) {
+  const npmCli = process.env.npm_execpath;
+  if (!npmCli) {
+    throw new Error("npm_execpath is unavailable; run E2E through npm");
+  }
+  return run(process.execPath, [npmCli, ...args], environment);
 }
 
 try {
@@ -32,7 +39,7 @@ try {
   for (const name of ["copy-a.bin", "copy-b.bin", "copy-c.bin"])
     write(name, "confirmed duplicate content");
 
-  const buildStatus = run("npm", ["run", "desktop:e2e:build"], {
+  const buildStatus = runNpm(["run", "desktop:e2e:build"], {
     ...process.env,
     VITE_E2E: "1",
   });
@@ -50,8 +57,7 @@ try {
         process.env.LOCAL_EXPERT_DISK_E2E_EVIDENCE_DIR,
     };
     for (const phase of ["scan", "restart"]) {
-      const status = run(
-        "npm",
+      const status = runNpm(
         ["exec", "--", "wdio", "run", "tests/e2e/wdio.conf.mjs"],
         { ...environment, LOCAL_EXPERT_DISK_E2E_PHASE: phase },
       );

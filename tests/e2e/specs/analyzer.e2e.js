@@ -140,13 +140,15 @@ async function measureDomReaction(action, selector) {
 async function measureWebdriverClickReaction(action, selector, expectedText) {
   const key = `${Date.now()}-${Math.random()}`;
   await browser.execute(
-    (metricKey, resultSelector, text) => {
+    (metricKey, target, resultSelector, text) => {
       window.__localExpertPerformance ??= {};
-      const started = performance.now();
+      let started = null;
       let finished = false;
       const observer = new MutationObserver(check);
       const timeout = setTimeout(() => finish(-2), 10_000);
-      function finish(value = performance.now() - started) {
+      function finish(
+        value = started === null ? -2 : performance.now() - started,
+      ) {
         if (finished) return;
         finished = true;
         clearTimeout(timeout);
@@ -159,15 +161,27 @@ async function measureWebdriverClickReaction(action, selector, expectedText) {
         requestAnimationFrame(() => finish());
       }
       window.__localExpertPerformance[metricKey] = null;
+      if (!(target instanceof HTMLElement)) {
+        finish(-1);
+        return;
+      }
       observer.observe(document.body, {
         attributes: true,
         childList: true,
         characterData: true,
         subtree: true,
       });
-      check();
+      target.addEventListener(
+        "click",
+        () => {
+          started = performance.now();
+          check();
+        },
+        { capture: true, once: true },
+      );
     },
     key,
+    action,
     selector,
     expectedText,
   );
