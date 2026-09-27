@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AnalyzerPanel } from "./AnalyzerPanel";
+import { COLUMN_ROW_HEIGHT_PX } from "./components/ColumnBrowser";
 import {
   getChildren,
   getCategories,
@@ -190,7 +191,9 @@ describe("Analyzer UI", () => {
     const list = screen.getByRole("listbox", {
       name: "Содержимое каталога fixture",
     });
-    fireEvent.scroll(list, { target: { scrollTop: 44 * 99 } });
+    fireEvent.scroll(list, {
+      target: { scrollTop: COLUMN_ROW_HEIGHT_PX * 99 },
+    });
     expect(await findInExplorer("file-099")).toBeInTheDocument();
     expect(within(list).getAllByRole("option").length).toBeLessThan(100);
   });

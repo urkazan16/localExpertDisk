@@ -129,10 +129,15 @@ describe("semantic design tokens", () => {
     const smallHeight = Number.parseFloat(token("control-height-sm"));
     const mediumHeight = Number.parseFloat(token("control-height-md"));
     const searchHeight = Number.parseFloat(token("control-height-search"));
-    expect(smallHeight).toBeGreaterThanOrEqual(2);
-    expect(mediumHeight).toBeGreaterThanOrEqual(2.5);
+    expect(smallHeight).toBe(2);
+    expect(mediumHeight).toBeGreaterThanOrEqual(2.25);
+    expect(mediumHeight).toBeLessThanOrEqual(2.5);
     expect(searchHeight).toBeGreaterThanOrEqual(2.625);
     expect(searchHeight).toBeLessThanOrEqual(2.875);
+    expect(token("font-size-control")).toBe("0.875rem");
+    expect(token("checkbox-size")).toBe("1.125rem");
+    expect(token("scrollbar-size")).toBe("0.625rem");
+    expect(token("row-height-compact")).toBe("2.5rem");
     expect(token("control-background")).toBe("var(--color-background-subtle)");
     expect(token("control-border-focus")).toBe("var(--color-border-focus)");
   });

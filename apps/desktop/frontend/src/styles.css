@@ -7,6 +7,25 @@
 }
 * {
   box-sizing: border-box;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-width: thin;
+}
+*::-webkit-scrollbar {
+  height: var(--scrollbar-size);
+  width: var(--scrollbar-size);
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
 }
 body {
   margin: 0;
@@ -433,7 +452,7 @@ button {
   display: inline-flex;
   font: inherit;
   font-family: var(--font-family-sans);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-control);
   font-weight: var(--font-weight-semibold);
   justify-content: center;
   min-height: var(--control-height-md);
@@ -698,7 +717,7 @@ progress {
   display: grid;
   gap: var(--space-2);
   grid-template-columns: 1.25rem 1.25rem minmax(4rem, 1fr) auto 0.75rem;
-  height: 44px;
+  height: var(--row-height-compact);
   padding: 0 var(--space-2);
 }
 .column-row:hover {

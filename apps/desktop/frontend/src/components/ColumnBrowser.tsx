@@ -11,7 +11,7 @@ import type { DirectoryColumn, FolderSort } from "../state/analyzerState";
 import { Icon } from "../ui/icons";
 import { Checkbox } from "../ui/primitives";
 
-const ROW_HEIGHT = 44;
+export const COLUMN_ROW_HEIGHT_PX = 40;
 const VIEWPORT_HEIGHT = 420;
 const VIRTUAL_THRESHOLD = 40;
 const OVERSCAN = 5;
@@ -96,9 +96,10 @@ function Column({
 
   const start =
     items.length >= VIRTUAL_THRESHOLD
-      ? Math.max(0, Math.floor(liveScrollTop / ROW_HEIGHT) - OVERSCAN)
+      ? Math.max(0, Math.floor(liveScrollTop / COLUMN_ROW_HEIGHT_PX) - OVERSCAN)
       : 0;
-  const visibleCount = Math.ceil(VIEWPORT_HEIGHT / ROW_HEIGHT) + OVERSCAN * 2;
+  const visibleCount =
+    Math.ceil(VIEWPORT_HEIGHT / COLUMN_ROW_HEIGHT_PX) + OVERSCAN * 2;
   const end =
     items.length >= VIRTUAL_THRESHOLD
       ? Math.min(items.length, start + visibleCount)
@@ -114,7 +115,7 @@ function Column({
       if (viewportRef.current)
         viewportRef.current.scrollTop = Math.max(
           0,
-          nextIndex * ROW_HEIGHT - ROW_HEIGHT * 2,
+          nextIndex * COLUMN_ROW_HEIGHT_PX - COLUMN_ROW_HEIGHT_PX * 2,
         );
     }
     requestAnimationFrame(() => rowRefs.current.get(next.id)?.focus());
@@ -175,7 +176,9 @@ function Column({
         role="option"
         style={
           items.length >= VIRTUAL_THRESHOLD
-            ? { transform: `translateY(${itemIndex * ROW_HEIGHT}px)` }
+            ? {
+                transform: `translateY(${itemIndex * COLUMN_ROW_HEIGHT_PX}px)`,
+              }
             : undefined
         }
         tabIndex={focusedEntryId === entry.id ? 0 : -1}
@@ -252,7 +255,7 @@ function Column({
         {items.length >= VIRTUAL_THRESHOLD ? (
           <div
             className="directory-column__spacer"
-            style={{ height: items.length * ROW_HEIGHT }}
+            style={{ height: items.length * COLUMN_ROW_HEIGHT_PX }}
           >
             {rows}
           </div>
